@@ -2,13 +2,16 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.db import transaction
 
-from .models import Categoria, Producto, Pedido, DetallePedido, Resena
+from .models import Categoria, Producto, ImagenProducto, Direccion, Pedido, DetallePedido, Resena
 from .serializers import (
     RegistroSerializer, PerfilSerializer, UsuarioAdminSerializer,
-    CategoriaSerializer, ProductoSerializer, PedidoSerializer, ResenaSerializer
+    CategoriaSerializer, ImagenProductoSerializer, ProductoSerializer,
+    DireccionSerializer, PedidoSerializer, ResenaSerializer
 )
 from .permissions import (
     EsAdministradorOSoloLectura, EsPropietarioOAdministrador,
@@ -34,12 +37,35 @@ def mi_perfil(request):
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# ---------- Gestión de usuarios (solo administrador) ----------
+# ---------- Gestión de usuarios (solo administrador, CRUD completo) ----------
 
-class UsuarioAdminViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = User.objects.all()
+class UsuarioAdminViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.select_related('perfil').all()
     serializer_class = UsuarioAdminSerializer
     permission_classes = [EsSoloAdministrador]
+
+    def perform_destroy(self, instance):
+        if instance == self.request.user:
+            raise ValidationError(
+                'No puedes eliminar tu propia cuenta de administrador.'
+            )
+        instance.delete()
+
+
+# ---------- Direcciones de envío (cada usuario ve/gestiona las suyas, admin ve todas) ----------
+
+class DireccionViewSet(viewsets.ModelViewSet):
+    serializer_class = DireccionSerializer
+    permission_classes = [EsPropietarioOAdministrador]
+
+    def get_queryset(self):
+        usuario = self.request.user
+        if hasattr(usuario, 'perfil') and usuario.perfil.rol == 'administrador':
+            return Direccion.objects.all()
+        return Direccion.objects.filter(usuario=usuario)
+
+    def perform_create(self, serializer):
+        serializer.save(usuario=self.request.user)
 
 
 # ---------- Categorías (invitados/registrados leen, solo admin escribe) ----------
@@ -53,9 +79,23 @@ class CategoriaViewSet(viewsets.ModelViewSet):
 # ---------- Productos (invitados/registrados leen, solo admin escribe) ----------
 
 class ProductoViewSet(viewsets.ModelViewSet):
-    queryset = Producto.objects.all()
+    queryset = Producto.objects.prefetch_related('imagenes').all()
     serializer_class = ProductoSerializer
     permission_classes = [EsAdministradorOSoloLectura]
+
+
+# ---------- Imágenes de producto (invitados/registrados leen, solo admin escribe) ----------
+
+class ImagenProductoViewSet(viewsets.ModelViewSet):
+    serializer_class = ImagenProductoSerializer
+    permission_classes = [EsAdministradorOSoloLectura]
+
+    def get_queryset(self):
+        queryset = ImagenProducto.objects.all()
+        producto_id = self.request.query_params.get('producto')
+        if producto_id:
+            queryset = queryset.filter(producto_id=producto_id)
+        return queryset
 
 
 # ---------- Pedidos (usuario ve/gestiona los suyos, admin ve todo) ----------
@@ -112,7 +152,20 @@ def agregar_al_carrito(request):
     if not producto:
         return Response({'error': 'Producto no encontrado'}, status=status.HTTP_404_NOT_FOUND)
 
+    # Se normaliza a int: si llega como string (form-data) o int (JSON),
+    # el carrito siempre guarda el mismo tipo para poder compararlo después.
+    producto_id = producto.id
+
     carrito = _obtener_carrito(request.user.id)
+
+    cantidad_actual_en_carrito = next(
+        (item['cantidad'] for item in carrito if item['producto_id'] == producto_id), 0
+    )
+    if producto.stock < cantidad_actual_en_carrito + cantidad:
+        return Response(
+            {'error': f'Solo hay {producto.stock} unidades disponibles de "{producto.nombre}".'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     for item in carrito:
         if item['producto_id'] == producto_id:
@@ -168,21 +221,57 @@ def confirmar_carrito(request):
     if not carrito:
         return Response({'error': 'El carrito está vacío'}, status=status.HTTP_400_BAD_REQUEST)
 
-    pedido = Pedido.objects.create(usuario=request.user, estado='pendiente')
-    total = 0
+    direccion_id = request.data.get('direccion_id')
+    direccion = None
+    if direccion_id:
+        direccion = Direccion.objects.filter(id=direccion_id, usuario=request.user).first()
+        if not direccion:
+            return Response(
+                {'error': 'La dirección indicada no existe o no te pertenece.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-    for item in carrito:
-        subtotal = float(item['precio']) * item['cantidad']
-        DetallePedido.objects.create(
-            pedido=pedido,
-            producto_id=item['producto_id'],
-            cantidad=item['cantidad'],
-            subtotal=subtotal
-        )
-        total += subtotal
+    with transaction.atomic():
+        # Se bloquean las filas de producto para evitar condiciones de carrera
+        # (dos usuarios comprando la última pieza al mismo tiempo).
+        productos_ids = [int(item['producto_id']) for item in carrito]
+        productos = {
+            p.id: p for p in Producto.objects.select_for_update().filter(id__in=productos_ids)
+        }
 
-    pedido.total = total
-    pedido.save()
+        errores = []
+        for item in carrito:
+            producto = productos.get(int(item['producto_id']))
+            if not producto:
+                errores.append(f"El producto con id {item['producto_id']} ya no existe.")
+            elif producto.stock < item['cantidad']:
+                errores.append(
+                    f'Solo hay {producto.stock} unidades disponibles de "{producto.nombre}".'
+                )
+
+        if errores:
+            return Response({'error': errores}, status=status.HTTP_400_BAD_REQUEST)
+
+        pedido = Pedido.objects.create(usuario=request.user, direccion=direccion, estado='pendiente')
+        total = 0
+
+        for item in carrito:
+            producto = productos[int(item['producto_id'])]
+            subtotal = float(item['precio']) * item['cantidad']
+
+            DetallePedido.objects.create(
+                pedido=pedido,
+                producto=producto,
+                cantidad=item['cantidad'],
+                subtotal=subtotal
+            )
+            producto.stock -= item['cantidad']
+            producto.save()
+
+            total += subtotal
+
+        pedido.total = total
+        pedido.save()
 
     _guardar_carrito(request.user.id, [])
 
