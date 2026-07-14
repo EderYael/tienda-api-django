@@ -1,20 +1,25 @@
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 
 export default function Resenas() {
+  const [searchParams] = useSearchParams()
+  const searchQuery = searchParams.get('search') || ''
+
   const [resenas, setResenas] = useState([])
   const [error, setError] = useState('')
 
   async function cargar() {
     try {
-      const data = await api('/api/resenas/')
+      const url = searchQuery ? `/api/resenas/?search=${encodeURIComponent(searchQuery)}` : '/api/resenas/'
+      const data = await api(url)
       setResenas(data)
     } catch (err) {
       setError(err.message)
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [searchQuery])
 
   async function eliminar(r) {
     if (!confirm(`¿Eliminar la reseña de "${r.usuario}"?`)) return

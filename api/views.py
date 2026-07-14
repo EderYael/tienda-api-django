@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
+from rest_framework import filters
 
 from .models import Categoria, Producto, ImagenProducto, Direccion, Pedido, DetallePedido, Resena
 from .serializers import (
@@ -50,7 +51,8 @@ class UsuarioAdminViewSet(viewsets.ModelViewSet):
                 'No puedes eliminar tu propia cuenta de administrador.'
             )
         instance.delete()
-
+    filter_backends = [filters.SearchFilter]          # ← agregar
+    search_fields = ['username', 'email']
 
 # ---------- Direcciones de envío (cada usuario ve/gestiona las suyas, admin ve todas) ----------
 
@@ -74,6 +76,8 @@ class CategoriaViewSet(viewsets.ModelViewSet):
     queryset = Categoria.objects.all()
     serializer_class = CategoriaSerializer
     permission_classes = [EsAdministradorOSoloLectura]
+    filter_backends = [filters.SearchFilter]          # ← agregar
+    search_fields = ['nombre']
 
 
 # ---------- Productos (invitados/registrados leen, solo admin escribe) ----------
@@ -82,7 +86,8 @@ class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.prefetch_related('imagenes').all()
     serializer_class = ProductoSerializer
     permission_classes = [EsAdministradorOSoloLectura]
-
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['nombre', 'descripcion']
 
 # ---------- Imágenes de producto (invitados/registrados leen, solo admin escribe) ----------
 
@@ -103,6 +108,8 @@ class ImagenProductoViewSet(viewsets.ModelViewSet):
 class PedidoViewSet(viewsets.ModelViewSet):
     serializer_class = PedidoSerializer
     permission_classes = [EsPropietarioOAdministrador]
+    filter_backends = [filters.SearchFilter]          # ← agregar
+    search_fields = ['id', 'estado', 'usuario__username']
 
     def get_queryset(self):
         usuario = self.request.user
@@ -120,8 +127,10 @@ class ResenaViewSet(viewsets.ModelViewSet):
     queryset = Resena.objects.all()
     serializer_class = ResenaSerializer
     permission_classes = [EsAutorDeResenaOAdministrador]
+    filter_backends = [filters.SearchFilter]          # ← agregar
+    search_fields = ['comentario', 'usuario__username', 'producto__nombre']  # ← agregar
 
-    def get_serializer_context(self):
+def get_serializer_context(self):
         return {'request': self.request}
 
 

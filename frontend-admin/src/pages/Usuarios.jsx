@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 
 const VACIO = { username: '', email: '', password: '', rol: 'registrado' }
 
 export default function Usuarios() {
+  const [searchParams] = useSearchParams()
+  const searchQuery = searchParams.get('search') || ''
+
   const [usuarios, setUsuarios] = useState([])
   const [error, setError] = useState('')
   const [modalAbierto, setModalAbierto] = useState(false)
@@ -12,14 +16,15 @@ export default function Usuarios() {
 
   async function cargar() {
     try {
-      const data = await api('/api/usuarios/')
+      const url = searchQuery ? `/api/usuarios/?search=${encodeURIComponent(searchQuery)}` : '/api/usuarios/'
+      const data = await api(url)
       setUsuarios(data)
     } catch (err) {
       setError(err.message)
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [searchQuery])
 
   function abrirNuevo() {
     setEditando(null)

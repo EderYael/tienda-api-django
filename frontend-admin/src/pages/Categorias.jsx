@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 
 export default function Categorias() {
+  const [searchParams] = useSearchParams()
+  const searchQuery = searchParams.get('search') || ''
+
   const [categorias, setCategorias] = useState([])
   const [error, setError] = useState('')
   const [modalAbierto, setModalAbierto] = useState(false)
@@ -10,14 +14,15 @@ export default function Categorias() {
 
   async function cargar() {
     try {
-      const data = await api('/api/categorias/')
+      const url = searchQuery ? `/api/categorias/?search=${encodeURIComponent(searchQuery)}` : '/api/categorias/'
+      const data = await api(url)
       setCategorias(data)
     } catch (err) {
       setError(err.message)
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [searchQuery])
 
   function abrirNuevo() {
     setEditando(null)

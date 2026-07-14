@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 
 const ESTADOS = ['pendiente', 'pagado', 'enviado', 'cancelado']
@@ -11,20 +12,24 @@ const CLASE_PILL = {
 }
 
 export default function Pedidos() {
+  const [searchParams] = useSearchParams()
+  const searchQuery = searchParams.get('search') || ''
+
   const [pedidos, setPedidos] = useState([])
   const [error, setError] = useState('')
   const [expandido, setExpandido] = useState(null)
 
   async function cargar() {
     try {
-      const data = await api('/api/pedidos/')
+      const url = searchQuery ? `/api/pedidos/?search=${encodeURIComponent(searchQuery)}` : '/api/pedidos/'
+      const data = await api(url)
       setPedidos(data)
     } catch (err) {
       setError(err.message)
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [searchQuery])
 
   async function cambiarEstado(pedido, nuevoEstado) {
     try {

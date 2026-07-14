@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, getBaseUrl } from '../api.js'
 
 const VACIO = { nombre: '', descripcion: '', precio: '', stock: '', categoria: '' }
 
 export default function Productos() {
+  const [searchParams] = useSearchParams()
+  const searchQuery = searchParams.get('search') || ''
+
   const [productos, setProductos] = useState([])
   const [categorias, setCategorias] = useState([])
   const [error, setError] = useState('')
@@ -14,8 +18,12 @@ export default function Productos() {
 
   async function cargar() {
     try {
+      const urlProductos = searchQuery
+        ? `/api/productos/?search=${encodeURIComponent(searchQuery)}`
+        : '/api/productos/'
+
       const [prods, cats] = await Promise.all([
-        api('/api/productos/'),
+        api(urlProductos),
         api('/api/categorias/')
       ])
       setProductos(prods)
@@ -25,7 +33,9 @@ export default function Productos() {
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => {
+    cargar()
+  }, [searchQuery])
 
   function abrirNuevo() {
     setEditando(null)
@@ -136,7 +146,11 @@ export default function Productos() {
                     <td>{p.nombre}</td>
                     <td>{nombreCategoria(p.categoria)}</td>
                     <td>${parseFloat(p.precio).toFixed(2)}</td>
-                    <td className={p.stock <= 5 ? 'badge-stock-bajo' : ''}>{p.stock}</td>
+                    <td>
+                      <span className={p.stock <= 5 ? 'pill badge-stock-bajo' : 'pill pill-ok'}>
+                        {p.stock <= 5 ? 'Low Stock' : 'In Stock'} ({p.stock})
+                      </span>
+                    </td>
                     <td>
                       <div className="acciones-fila">
                         <button className="btn btn-secundario btn-chico" onClick={() => abrirEditar(p)}>Editar</button>
