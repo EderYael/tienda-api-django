@@ -19,7 +19,7 @@ class RegistroSerializer(serializers.ModelSerializer):
             email=validated_data['email'],
             password=validated_data['password']
         )
-        Perfil.objects.create(usuario=usuario, rol='registrado')
+        Perfil.objects.update_or_create(usuario=usuario, defaults={'rol': 'registrado'})
         return usuario
 
 
@@ -58,7 +58,7 @@ class UsuarioAdminSerializer(serializers.ModelSerializer):
             usuario.set_unusable_password()
         usuario.save()
 
-        Perfil.objects.create(usuario=usuario, rol=rol)
+        Perfil.objects.update_or_create(usuario=usuario, defaults={'rol': rol})
         return usuario
 
     def update(self, instance, validated_data):
