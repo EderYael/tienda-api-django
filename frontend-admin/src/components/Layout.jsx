@@ -1,12 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { logout, api } from '../api.js'
+import LogoBolsaSonido from './Logo.jsx'
 
 const ENLACES = [
   { to: '/', etiqueta: 'Resumen', fin: true },
   { to: '/productos', etiqueta: 'Productos' },
   { to: '/categorias', etiqueta: 'Categorías' },
   { to: '/pedidos', etiqueta: 'Pedidos' },
+  { to: '/ventas', etiqueta: 'Ventas' },
   { to: '/usuarios', etiqueta: 'Usuarios' },
   { to: '/resenas', etiqueta: 'Reseñas' }
 ]
@@ -80,7 +82,10 @@ export default function Layout() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="marca">Tienda<span>Admin</span></div>
+        <div className="marca">
+          <LogoBolsaSonido size={26} color="var(--color-primario)" grosor={6} />
+          Tienda<span>Música</span>
+        </div>
         <nav>
           {ENLACES.map((e) => (
             <NavLink

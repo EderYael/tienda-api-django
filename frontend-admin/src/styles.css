@@ -341,11 +341,100 @@ input[type="file"]:hover { border-color: var(--color-primario); background: #eff
 /* =========================================
    LOGIN
 ========================================= */
-.login-pantalla { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg-app); }
-.login-caja { background: rgba(255,255,255,0.8); backdrop-filter: blur(20px); padding: 40px; border-radius: var(--radio-tarjeta); width: 400px; box-shadow: var(--sombra-flotante); border: 1px solid white; }
-.login-caja h1 { font-size: 24px; font-weight: 800; margin: 0 0 8px 0; }
-.login-caja .sub { color: var(--texto-claro); font-size: 14px; margin-bottom: 24px; }
-.config-url { font-size: 12px; color: var(--texto-claro); margin-top: 24px; border-top: 1px dashed var(--gris-borde); padding-top: 16px; }
+/* Mensaje de error compartido en TODA la app (formularios, listas, login) */
+.error-msg {
+  background: var(--rojo-fondo);
+  color: var(--rojo-error);
+  padding: 11px 16px;
+  border-radius: var(--radio-boton);
+  font-size: 13px;
+  border: 1px solid #fca5a5;
+  margin-bottom: 16px;
+  font-weight: 500;
+}
+
+/* =========================================
+   LOGIN — Pantalla dividida
+========================================= */
+.login-pantalla {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-app); padding: 20px;
+}
+
+.login-tarjeta {
+  display: flex; background: var(--blanco); border-radius: 24px;
+  box-shadow: var(--sombra-modal); width: 100%; max-width: 980px;
+  min-height: 620px; overflow: hidden;
+}
+
+.login-lateral-izquierdo {
+  flex: 1; padding: 40px; margin: 12px; border-radius: 18px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  color: var(--blanco);
+  background: linear-gradient(150deg, #1e3a8a 0%, #2563eb 45%, #4338ca 75%, #6d28d9 100%);
+  box-shadow: inset 0 0 40px rgba(255, 255, 255, 0.12);
+  position: relative; overflow: hidden;
+}
+.login-lateral-izquierdo::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(circle at 30% 70%, rgba(255,255,255,0.12) 0%, transparent 55%);
+  pointer-events: none;
+}
+
+.login-marca-lateral { position: relative; z-index: 1; filter: drop-shadow(0 0 14px rgba(255,255,255,0.55)); }
+
+.lateral-texto-contenedor { margin-top: auto; position: relative; z-index: 1; }
+.lateral-subtitulo { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.85; font-weight: 700; }
+.lateral-titulo { font-size: 28px; font-weight: 800; line-height: 1.28; margin: 10px 0 12px 0; }
+.lateral-descripcion { font-size: 14px; line-height: 1.55; opacity: 0.88; }
+
+.login-lateral-derecho {
+  flex: 1.1; padding: 50px 60px; display: flex; flex-direction: column; justify-content: center;
+}
+.login-marca-form { color: var(--color-primario); margin-bottom: 20px; }
+
+.formulario-titulo { font-size: 27px; color: var(--texto-oscuro); font-weight: 800; margin-bottom: 6px; }
+.formulario-subtitulo { font-size: 14px; color: var(--texto-medio); margin-bottom: 28px; line-height: 1.5; }
+
+.login-formulario { display: flex; flex-direction: column; gap: 16px; }
+.campo-grupo { display: flex; flex-direction: column; gap: 6px; }
+.campo-grupo label { font-size: 13px; font-weight: 600; color: var(--texto-medio); }
+
+.password-wrapper { position: relative; display: flex; align-items: center; }
+.password-wrapper input { padding-right: 44px; width: 100%; }
+.password-toggle {
+  position: absolute; right: 10px; background: none; border: none; cursor: pointer;
+  color: var(--texto-claro); display: flex; align-items: center; justify-content: center;
+  padding: 6px; border-radius: 8px; transition: color 0.2s, background 0.2s;
+}
+.password-toggle:hover { color: var(--texto-medio); background: var(--gris-fondo); }
+
+.btn-entrar {
+  background: var(--color-primario); color: var(--blanco); border: none; padding: 14px;
+  border-radius: var(--radio-boton); font-size: 14.5px; font-weight: 700; cursor: pointer;
+  transition: all 0.2s; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.28); margin-top: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-entrar:hover { background: var(--color-primario-hover); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.38); }
+.btn-entrar:active { transform: scale(0.98); }
+.btn-entrar:disabled { background: #93b4f8; cursor: not-allowed; box-shadow: none; }
+
+.config-url-seccion { margin-top: 22px; }
+.config-url-disparador {
+  display: flex; align-items: center; gap: 6px; background: none; border: none; cursor: pointer;
+  color: var(--texto-claro); font-size: 12px; font-weight: 600; padding: 0;
+  text-transform: uppercase; letter-spacing: 0.4px; transition: color 0.2s;
+}
+.config-url-disparador:hover { color: var(--texto-medio); }
+.config-url-cuerpo {
+  margin-top: 14px; padding-top: 16px; border-top: 1px dashed var(--gris-borde);
+}
+
+@media (max-width: 850px) {
+  .login-lateral-izquierdo { display: none; }
+  .login-tarjeta { max-width: 460px; }
+  .login-lateral-derecho { padding: 40px 30px; }
+}
 
 /* =========================================
    TOP BAR (Barra Superior)
@@ -639,3 +728,24 @@ input[type="file"]:hover { border-color: var(--color-primario); background: #eff
 .leyenda-donut { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: center; margin-top: 8px; }
 .leyenda-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--texto-medio); font-weight: 500; text-transform: capitalize; }
 .leyenda-punto { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* =========================================
+   VENTAS
+========================================= */
+.filtros-ventas {
+  display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  padding: 20px 24px; margin-bottom: 20px;
+}
+.campo-filtro { display: flex; flex-direction: column; gap: 6px; min-width: 140px; }
+.campo-filtro label { font-size: 12px; font-weight: 600; color: var(--texto-medio); }
+
+.selector-granularidad {
+  display: flex; background: var(--gris-fondo); border-radius: var(--radio-boton);
+  padding: 3px; gap: 2px; flex-shrink: 0;
+}
+.selector-granularidad button {
+  border: none; background: none; padding: 7px 14px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--texto-medio); cursor: pointer;
+  transition: all 0.2s;
+}
+.selector-granularidad button.activo { background: var(--blanco); color: var(--color-primario); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }

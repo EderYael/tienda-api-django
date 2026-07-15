@@ -5,7 +5,8 @@ from .views import (
     UsuarioAdminViewSet, CategoriaViewSet, ProductoViewSet, ImagenProductoViewSet,
     DireccionViewSet, PedidoViewSet, ResenaViewSet,
     ver_carrito, agregar_al_carrito, actualizar_carrito,
-    eliminar_del_carrito, vaciar_carrito, confirmar_carrito
+    eliminar_del_carrito, vaciar_carrito, confirmar_carrito,
+    ia_endpoint
 )
 
 router = DefaultRouter()
@@ -27,4 +28,7 @@ urlpatterns = [
     path('carrito/eliminar/<int:producto_id>/', eliminar_del_carrito),
     path('carrito/vaciar/', vaciar_carrito),
     path('carrito/confirmar/', confirmar_carrito),
+
+    # Endpoint de IA
+    path('ia/', ia_endpoint),
 ] + router.urls
