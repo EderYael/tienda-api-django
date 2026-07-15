@@ -39,7 +39,9 @@ export default function Login() {
 
         {/* LADO IZQUIERDO: Banner con degradado */}
         <div className="login-lateral-izquierdo">
-          <LogoBolsaSonido size={44} color="white" grosor={4.5} className="login-marca-lateral" />
+          <div className="login-marca-lateral-wrap">
+            <LogoBolsaSonido size={280} color="white" grosor={4} />
+          </div>
           <div className="lateral-texto-contenedor">
             <span className="lateral-subtitulo">Tienda de Música — Panel Admin</span>
             <h2 className="lateral-titulo">
