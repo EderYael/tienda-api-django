@@ -44,6 +44,17 @@ class UsuarioAdminViewSet(viewsets.ModelViewSet):
     queryset = User.objects.select_related('perfil').all()
     serializer_class = UsuarioAdminSerializer
     permission_classes = [EsSoloAdministrador]
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['username', 'email']
+
+    def perform_update(self, serializer):
+        intenta_autosuspenderse = (
+            serializer.instance == self.request.user
+            and serializer.validated_data.get('is_active') is False
+        )
+        if intenta_autosuspenderse:
+            raise ValidationError('No puedes suspender tu propia cuenta.')
+        serializer.save()
 
     def perform_destroy(self, instance):
         if instance == self.request.user:
@@ -51,8 +62,6 @@ class UsuarioAdminViewSet(viewsets.ModelViewSet):
                 'No puedes eliminar tu propia cuenta de administrador.'
             )
         instance.delete()
-    filter_backends = [filters.SearchFilter]          # ← agregar
-    search_fields = ['username', 'email']
 
 # ---------- Direcciones de envío (cada usuario ve/gestiona las suyas, admin ve todas) ----------
 
@@ -127,10 +136,10 @@ class ResenaViewSet(viewsets.ModelViewSet):
     queryset = Resena.objects.all()
     serializer_class = ResenaSerializer
     permission_classes = [EsAutorDeResenaOAdministrador]
-    filter_backends = [filters.SearchFilter]          # ← agregar
-    search_fields = ['comentario', 'usuario__username', 'producto__nombre']  # ← agregar
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['comentario', 'usuario__username', 'producto__nombre']
 
-def get_serializer_context(self):
+    def get_serializer_context(self):
         return {'request': self.request}
 
 
