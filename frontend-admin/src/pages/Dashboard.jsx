@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -24,6 +25,7 @@ function claveDia(fecha) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [datos, setDatos] = useState(null)
   const [error, setError] = useState('')
   const [cargando, setCargando] = useState(true)
@@ -31,75 +33,86 @@ export default function Dashboard() {
   useEffect(() => {
     async function cargar() {
       setCargando(true)
-      try {
-        const [productos, pedidos, usuarios, resenas] = await Promise.all([
-          api('/api/productos/'),
-          api('/api/pedidos/'),
-          api('/api/usuarios/'),
-          api('/api/resenas/')
-        ])
+      // Promise.allSettled en vez de Promise.all: si UNA petición falla
+      // (ej. reseñas tarda o truena), las demás igual se muestran con lo
+      // que sí cargó, en vez de tirar todo el Dashboard en blanco.
+      const resultados = await Promise.allSettled([
+        api('/api/productos/'),
+        api('/api/pedidos/'),
+        api('/api/usuarios/'),
+        api('/api/resenas/')
+      ])
+      const [rProductos, rPedidos, rUsuarios, rResenas] = resultados
 
-        const pendientes = pedidos.filter((p) => p.estado === 'pendiente').length
-        const stockBajo = productos.filter((p) => p.stock <= 5).length
-        const registrados = usuarios.filter((u) => u.rol === 'registrado').length
-        const ventasTotales = pedidos
-          .filter((p) => p.estado !== 'cancelado')
-          .reduce((acc, p) => acc + parseFloat(p.total), 0)
+      const productos = rProductos.status === 'fulfilled' ? rProductos.value : []
+      const pedidos = rPedidos.status === 'fulfilled' ? rPedidos.value : []
+      const usuarios = rUsuarios.status === 'fulfilled' ? rUsuarios.value : []
+      const resenas = rResenas.status === 'fulfilled' ? rResenas.value : []
 
-        // Tendencia de ventas: últimos 7 días (por fecha local)
-        const hoy = new Date()
-        const dias = []
-        for (let i = 6; i >= 0; i--) {
-          const d = new Date(hoy)
-          d.setDate(d.getDate() - i)
-          dias.push(d)
-        }
-        const tendencia = dias.map((d) => {
-          const clave = claveDia(d)
-          const total = pedidos
-            .filter((p) => p.estado !== 'cancelado' && claveDia(p.fecha) === clave)
-            .reduce((acc, p) => acc + parseFloat(p.total), 0)
-          return { dia: NOMBRES_DIA[d.getDay()], total: Math.round(total * 100) / 100 }
-        })
+      const fallos = []
+      if (rProductos.status === 'rejected') fallos.push('productos')
+      if (rPedidos.status === 'rejected') fallos.push('pedidos')
+      if (rUsuarios.status === 'rejected') fallos.push('usuarios')
+      if (rResenas.status === 'rejected') fallos.push('reseñas')
+      setError(fallos.length > 0 ? `No se pudo cargar: ${fallos.join(', ')}. El resto del panel muestra lo disponible.` : '')
 
-        // Distribución por estado
-        const conteoEstado = { pendiente: 0, pagado: 0, enviado: 0, cancelado: 0 }
-        pedidos.forEach((p) => { if (conteoEstado[p.estado] !== undefined) conteoEstado[p.estado]++ })
-        const distribucion = Object.entries(conteoEstado)
-          .filter(([, cant]) => cant > 0)
-          .map(([estado, cantidad]) => ({ estado, cantidad }))
+      const pendientes = pedidos.filter((p) => p.estado === 'pendiente').length
+      const productosStockBajo = productos.filter((p) => p.stock <= 5)
+      const stockBajo = productosStockBajo.length
+      const registrados = usuarios.filter((u) => u.rol === 'registrado').length
+      const ventasTotales = pedidos
+        .filter((p) => p.estado !== 'cancelado')
+        .reduce((acc, p) => acc + parseFloat(p.total), 0)
 
-        // Top 5 productos más vendidos (por unidades acumuladas en DetallePedido)
-        const cantidadPorProducto = {}
-        pedidos.forEach((p) => {
-          p.detalles.forEach((d) => {
-            cantidadPorProducto[d.producto] = (cantidadPorProducto[d.producto] || 0) + d.cantidad
-          })
-        })
-        const topProductos = Object.entries(cantidadPorProducto)
-          .map(([id, cantidad]) => {
-            const prod = productos.find((p) => p.id === parseInt(id, 10))
-            return { nombre: prod ? prod.nombre : `#${id}`, cantidad }
-          })
-          .sort((a, b) => b.cantidad - a.cantidad)
-          .slice(0, 5)
-
-        // Calificación promedio
-        const promedioCalificacion = resenas.length
-          ? resenas.reduce((acc, r) => acc + r.calificacion, 0) / resenas.length
-          : 0
-
-        setDatos({
-          ventasTotales, pendientes, stockBajo, registrados,
-          tendencia, distribucion, topProductos,
-          promedioCalificacion, totalResenas: resenas.length
-        })
-        setError('')
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setCargando(false)
+      // Tendencia de ventas: últimos 7 días (por fecha local)
+      const hoy = new Date()
+      const dias = []
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(hoy)
+        d.setDate(d.getDate() - i)
+        dias.push(d)
       }
+      const tendencia = dias.map((d) => {
+        const clave = claveDia(d)
+        const total = pedidos
+          .filter((p) => p.estado !== 'cancelado' && claveDia(p.fecha) === clave)
+          .reduce((acc, p) => acc + parseFloat(p.total), 0)
+        return { dia: NOMBRES_DIA[d.getDay()], total: Math.round(total * 100) / 100 }
+      })
+
+      // Distribución por estado
+      const conteoEstado = { pendiente: 0, pagado: 0, enviado: 0, cancelado: 0 }
+      pedidos.forEach((p) => { if (conteoEstado[p.estado] !== undefined) conteoEstado[p.estado]++ })
+      const distribucion = Object.entries(conteoEstado)
+        .filter(([, cant]) => cant > 0)
+        .map(([estado, cantidad]) => ({ estado, cantidad }))
+
+      // Top 5 productos más vendidos (por unidades acumuladas en DetallePedido)
+      const cantidadPorProducto = {}
+      pedidos.forEach((p) => {
+        p.detalles.forEach((d) => {
+          cantidadPorProducto[d.producto] = (cantidadPorProducto[d.producto] || 0) + d.cantidad
+        })
+      })
+      const topProductos = Object.entries(cantidadPorProducto)
+        .map(([id, cantidad]) => {
+          const prod = productos.find((p) => p.id === parseInt(id, 10))
+          return { nombre: prod ? prod.nombre : `#${id}`, cantidad }
+        })
+        .sort((a, b) => b.cantidad - a.cantidad)
+        .slice(0, 5)
+
+      // Calificación promedio
+      const promedioCalificacion = resenas.length
+        ? resenas.reduce((acc, r) => acc + r.calificacion, 0) / resenas.length
+        : 0
+
+      setDatos({
+        ventasTotales, pendientes, stockBajo, registrados, productosStockBajo,
+        tendencia, distribucion, topProductos,
+        promedioCalificacion, totalResenas: resenas.length
+      })
+      setCargando(false)
     }
     cargar()
   }, [])
@@ -120,16 +133,32 @@ export default function Dashboard() {
       ) : datos && (
         <>
           <div className="tarjetas-kpi">
-            <TarjetaKpi titulo="Ventas totales" valor={`$${datos.ventasTotales.toFixed(2)}`} icono={<IconDollarSign size={17} />} color="#10b981" />
-            <TarjetaKpi titulo="Pedidos pendientes" valor={datos.pendientes} icono={<IconShoppingCart size={17} />} color="#f59e0b" alerta={datos.pendientes > 0} />
-            <TarjetaKpi titulo="Stock bajo (≤5)" valor={datos.stockBajo} icono={<IconPackage size={17} />} color="#ef4444" alerta={datos.stockBajo > 0} />
-            <TarjetaKpi titulo="Usuarios registrados" valor={datos.registrados} icono={<IconUsers size={17} />} color="#2563eb" />
+            <TarjetaKpi
+              titulo="Ventas totales" valor={`$${datos.ventasTotales.toFixed(2)}`}
+              icono={<IconDollarSign size={17} />} color="#10b981"
+              onClick={() => navigate('/ventas')}
+            />
+            <TarjetaKpi
+              titulo="Pedidos pendientes" valor={datos.pendientes}
+              icono={<IconShoppingCart size={17} />} color="#f59e0b" alerta={datos.pendientes > 0}
+              onClick={() => navigate('/pedidos?search=pendiente')}
+            />
+            <TarjetaKpi
+              titulo="Stock bajo (≤5)" valor={datos.stockBajo}
+              icono={<IconPackage size={17} />} color="#ef4444" alerta={datos.stockBajo > 0}
+              onClick={() => navigate('/productos?stockBajo=true')}
+            />
+            <TarjetaKpi
+              titulo="Usuarios registrados" valor={datos.registrados}
+              icono={<IconUsers size={17} />} color="#2563eb"
+              onClick={() => navigate('/usuarios')}
+            />
           </div>
 
           <div className="graficas-grid">
             <div className="grafica-tarjeta">
               <h3>Tendencia de ventas</h3>
-              <p className="grafica-sub">Últimos 7 días</p>
+              <p className="grafica-sub">Últimos 7 días · para más detalle y otros rangos, ve a Ventas</p>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={datos.tendencia}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
@@ -210,9 +239,15 @@ export default function Dashboard() {
   )
 }
 
-function TarjetaKpi({ titulo, valor, icono, color, alerta }) {
+function TarjetaKpi({ titulo, valor, icono, color, alerta, onClick }) {
   return (
-    <div className={`tarjeta-kpi ${alerta ? 'tarjeta-kpi-alerta' : ''}`}>
+    <div
+      className={`tarjeta-kpi tarjeta-kpi-clicable ${alerta ? 'tarjeta-kpi-alerta' : ''}`}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+    >
       <div className="tarjeta-kpi-encabezado">
         <span className="tarjeta-kpi-etiqueta">{titulo}</span>
         <span className="tarjeta-kpi-icono" style={{ background: `${color}1a`, color }}>

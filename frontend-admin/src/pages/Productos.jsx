@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { api, getBaseUrl } from '../api.js'
 import { useToast } from '../context/ToastContext.jsx'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Spinner from '../components/Spinner.jsx'
 import { SkeletonFilas } from '../components/Skeleton.jsx'
+import { IconFilterX } from '../components/icons.jsx'
 import { validarProducto, erroresDeApi } from '../utils/validacion.js'
 
 const VACIO = { nombre: '', descripcion: '', precio: '', stock: '', categoria: '' }
 
 export default function Productos() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const searchQuery = searchParams.get('search') || ''
+  const soloStockBajo = searchParams.get('stockBajo') === 'true'
   const { showToast } = useToast()
 
   const [productos, setProductos] = useState([])
@@ -158,6 +161,12 @@ export default function Productos() {
     return <span className="pill pill-ok">En stock ({stock})</span>
   }
 
+  const productosMostrados = soloStockBajo ? productos.filter((p) => p.stock <= 5) : productos
+
+  function quitarFiltroStockBajo() {
+    navigate('/productos', { replace: true })
+  }
+
   return (
     <div>
       <div className="encabezado">
@@ -170,6 +179,15 @@ export default function Productos() {
 
       {error && <div className="error-msg">{error}</div>}
 
+      {soloStockBajo && (
+        <div className="chip-filtro-activo">
+          Mostrando solo productos con stock bajo (≤5)
+          <button type="button" onClick={quitarFiltroStockBajo}>
+            <IconFilterX size={13} /> Quitar filtro
+          </button>
+        </div>
+      )}
+
       <div className="tarjeta">
         <table>
           <thead>
@@ -180,10 +198,10 @@ export default function Productos() {
           <tbody>
             {cargandoLista ? (
               <SkeletonFilas filas={5} columnas={6} />
-            ) : productos.length === 0 ? (
-              <tr><td colSpan="6"><div className="vacio">Aún no hay productos. Crea el primero.</div></td></tr>
+            ) : productosMostrados.length === 0 ? (
+              <tr><td colSpan="6"><div className="vacio">{soloStockBajo ? 'Ningún producto tiene stock bajo ahora mismo.' : 'Aún no hay productos. Crea el primero.'}</div></td></tr>
             ) : (
-              productos.map((p) => {
+              productosMostrados.map((p) => {
                 const img = urlImagen(p)
                 return (
                   <tr key={p.id}>

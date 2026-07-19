@@ -1,15 +1,21 @@
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
 from rest_framework import status, viewsets
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Sum, Count
 from rest_framework import filters
-from datetime import datetime, timedelta
 import re
+import os
+import json
+import logging
+import requests
+import unicodedata
+
+logger = logging.getLogger(__name__)
 
 from .models import Categoria, Producto, ImagenProducto, Direccion, Pedido, DetallePedido, Resena
 from .serializers import (
@@ -302,106 +308,369 @@ def confirmar_carrito(request):
     )
 
 
-# ---------- Endpoint de IA ----------
+# ---------- Búsqueda inteligente de productos con IA (Gemini) — enfocada en el cliente ----------
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def ia_endpoint(request):
-    """
-    Endpoint de IA que recibe una pregunta en lenguaje natural y devuelve datos de la BD.
-    Ejemplos de preguntas:
-      - "lista productos"
-      - "cuántos usuarios hay"
-      - "ventas totales"
-      - "pedidos recientes"
-      - "stock bajo"
-      - "productos de electrónica"
-    """
-    pregunta = request.data.get('pregunta', '').strip().lower()
-    if not pregunta:
-        return Response({'error': 'La pregunta no puede estar vacía'}, status=400)
+# "gemini-flash-latest" es el alias que Google mostró en el quickstart de tu
+# propia cuenta — a diferencia de un nombre de modelo específico (ej.
+# "gemini-2.5-flash-lite"), este siempre apunta a un modelo Flash vigente,
+# así que no se rompe si Google renombra versiones más adelante.
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-flash-latest')
+GEMINI_URL = f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent'
 
-    respuesta = {
-        "pregunta": pregunta,
-        "datos": None,
-        "tipo": "desconocido",
-        "error": None
+# Conectores comunes que se descartan cuando NO hay IA disponible, para que
+# el respaldo no busque literalmente "y", "de", "una", etc.
+STOPWORDS_ES = {
+    'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'de', 'del', 'al',
+    'y', 'o', 'que', 'en', 'a', 'para', 'con', 'por', 'es', 'son', 'ser',
+    'quiero', 'busco', 'necesito', 'tengo', 'algo', 'tienen', 'tienes', 'hay',
+    'mi', 'me', 'mí', 'muy', 'solo', 'sólo', 'esta', 'este', 'esto', 'ya',
+    'pesos', 'peso',
+}
+
+TTL_CACHE_INTERPRETACION = 60 * 30   # 30 min: la misma pregunta no vuelve a gastar cuota
+COOLDOWN_CUOTA_SEGUNDOS = 120        # tras un 429, no se reintenta con Gemini por 2 min
+CLAVE_COOLDOWN_GEMINI = 'ia_gemini_cooldown_activo'
+MAX_LARGO_CONSULTA = 300
+
+
+class GeminiError(Exception):
+    """Error genérico al hablar con la API de Gemini."""
+
+
+class GeminiNoConfigurado(GeminiError):
+    """Falta la variable de entorno GEMINI_API_KEY."""
+
+
+class GeminiCuotaExcedida(GeminiError):
+    """Se alcanzó el límite de peticiones del tier gratuito (HTTP 429)."""
+
+
+class GeminiRespuestaBloqueada(GeminiError):
+    """Gemini bloqueó la respuesta por sus filtros de seguridad de contenido."""
+
+
+def _normalizar_texto(texto):
+    """Quita acentos y pasa a minúsculas: 'Micrófono' y 'microfono' terminan
+    siendo el mismo texto para efectos de búsqueda. Postgres sin la
+    extensión 'unaccent' SÍ distingue acentos en icontains, así que esta
+    normalización se hace en Python (ver _buscar_productos)."""
+    if not texto:
+        return ''
+    descompuesto = unicodedata.normalize('NFKD', texto)
+    return ''.join(c for c in descompuesto if not unicodedata.combining(c)).lower()
+
+
+def _en_cooldown_por_cuota():
+    return cache.get(CLAVE_COOLDOWN_GEMINI) is not None
+
+
+def _activar_cooldown_por_cuota():
+    cache.set(CLAVE_COOLDOWN_GEMINI, True, COOLDOWN_CUOTA_SEGUNDOS)
+
+
+def _clave_cache_interpretacion(consulta):
+    return f'ia_interpretacion:{_normalizar_texto(consulta)}'
+
+
+def _extraer_presupuesto(consulta):
+    """
+    Detecta un presupuesto máximo mencionado explícitamente, ej. 'tengo 500
+    pesos', 'menos de $300', 'máximo 1000'. Se hace con regex (no con IA)
+    para que sea determinístico y funcione incluso en modo de respaldo, sin
+    depender de que Gemini esté disponible.
+    """
+    patrones = [
+        r'(?:tengo|con|presupuesto\s+de|hasta|m[aá]ximo|menos\s+de|no\s+m[aá]s\s+de)\s*\$?\s*([\d,]+(?:\.\d+)?)',
+        r'\$\s*([\d,]+(?:\.\d+)?)',
+    ]
+    for patron in patrones:
+        match = re.search(patron, consulta, re.IGNORECASE)
+        if match:
+            try:
+                return float(match.group(1).replace(',', ''))
+            except ValueError:
+                continue
+    return None
+
+
+def _construir_prompt_sistema(categorias):
+    lista_categorias = ', '.join(categorias) if categorias else 'aún no hay categorías registradas'
+    return (
+        'Eres el asistente de compras de una tienda de instrumentos musicales y '
+        'equipo de audio. El cliente te escribe lo que busca o necesita.\n\n'
+        f'Categorías reales de la tienda: {lista_categorias}.\n\n'
+        'Responde ÚNICAMENTE con un JSON con estos campos:\n'
+        '- "mensaje": respuesta breve, natural y amable en español, como un '
+        'vendedor conocedor (1-2 frases, sin emojis ni markdown).\n'
+        '- "palabras_clave": lista de sustantivos simples en español para '
+        'buscar en el catálogo. Nunca inventes nombres de productos ni marcas '
+        'específicas que el cliente no mencionó.\n'
+        '- "categoria_sugerida": si una de las categorías reales de arriba '
+        'encaja claramente, escríbela EXACTAMENTE igual a como aparece en la '
+        'lista; si ninguna encaja, deja este campo como cadena vacía.\n\n'
+        'Si la consulta no tiene relación alguna con una tienda de música, '
+        'dilo amablemente en "mensaje" y deja "palabras_clave" vacío.'
+    )
+
+
+def _interpretar_consulta(consulta, categorias):
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if not api_key:
+        raise GeminiNoConfigurado()
+
+    payload = {
+        'systemInstruction': {'parts': [{'text': _construir_prompt_sistema(categorias)}]},
+        'contents': [{'parts': [{'text': consulta}]}],
+        'generationConfig': {
+            'responseMimeType': 'application/json',
+            'responseSchema': {
+                'type': 'OBJECT',
+                'properties': {
+                    'mensaje': {'type': 'STRING'},
+                    'palabras_clave': {'type': 'ARRAY', 'items': {'type': 'STRING'}},
+                    'categoria_sugerida': {'type': 'STRING'},
+                },
+                'required': ['mensaje', 'palabras_clave'],
+            },
+        },
     }
 
-    # 1. Contar usuarios
-    if re.search(r'\b(cuántos|numero|total|cantidad)\s+usuarios?\b', pregunta):
-        total = User.objects.count()
-        respuesta['datos'] = {'total_usuarios': total}
-        respuesta['tipo'] = 'contar'
+    INTENTOS = 2
+    ultimo_error = None
 
-    # 2. Listar productos
-    elif 'productos' in pregunta and re.search(r'\b(lista|muestra|todos|ver)\b', pregunta):
-        productos = Producto.objects.all().values('id', 'nombre', 'precio', 'stock', 'categoria__nombre')
-        respuesta['datos'] = list(productos)
-        respuesta['tipo'] = 'listar'
+    for intento in range(1, INTENTOS + 1):
+        try:
+            resp = requests.post(
+                GEMINI_URL,
+                headers={'Content-Type': 'application/json', 'X-goog-api-key': api_key},
+                json=payload,
+                timeout=25,
+            )
+        except requests.exceptions.RequestException as exc:
+            # Timeout o problema de red: puede ser pasajero, se reintenta una vez.
+            logger.warning('IA: intento %s/%s falló al conectar con Gemini: %s', intento, INTENTOS, exc)
+            ultimo_error = exc
+            continue
 
-    # 3. Productos con stock bajo (menor a 10)
-    elif re.search(r'\b(stock\s+bajo|poco\s+stock|stock\s+menor|bajo\s+stock)\b', pregunta):
-        productos = Producto.objects.filter(stock__lt=10).values('id', 'nombre', 'stock')
-        respuesta['datos'] = list(productos)
-        respuesta['tipo'] = 'listar'
+        if resp.status_code == 429:
+            logger.warning('IA: cuota de Gemini excedida (429). Respuesta: %s', resp.text[:300])
+            _activar_cooldown_por_cuota()
+            raise GeminiCuotaExcedida()
 
-    # 4. Ventas totales (suma de total de pedidos)
-    elif re.search(r'\b(ventas\s+totales|ingresos\s+totales|total\s+ventas|ganancias)\b', pregunta):
-        total = Pedido.objects.aggregate(total_ventas=Sum('total'))['total_ventas'] or 0
-        respuesta['datos'] = {'total_ventas': float(total)}
-        respuesta['tipo'] = 'contar'
+        if resp.status_code != 200:
+            # Este log es la parte clave para diagnosticar: aquí se ve el motivo
+            # REAL del fallo (modelo mal escrito, key inválida, etc.) en la
+            # consola donde corre "python manage.py runserver".
+            logger.error('IA: Gemini respondió %s: %s', resp.status_code, resp.text[:500])
+            raise GeminiError(f'Gemini respondió con estado {resp.status_code}')
 
-    # 5. Pedidos recientes (últimos 7 días)
-    elif re.search(r'\b(pedidos\s+recientes|ultimos\s+pedidos|pedidos\s+nuevos)\b', pregunta):
-        fecha_limite = datetime.now() - timedelta(days=7)
-        pedidos = Pedido.objects.filter(fecha_creacion__gte=fecha_limite).order_by('-fecha_creacion')[:10].values(
-            'id', 'total', 'estado', 'fecha_creacion', 'usuario__email'
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            logger.error('IA: la respuesta de Gemini no es JSON válido: %s', exc)
+            raise GeminiError('Respuesta de Gemini en formato inesperado')
+
+        # Gemini puede bloquear la consulta completa por sus filtros de
+        # seguridad ANTES de generar nada (promptFeedback.blockReason), o
+        # bloquear la respuesta ya generada (finishReason == 'SAFETY').
+        # Ambos casos se distinguen de un error técnico normal.
+        bloqueo = (data.get('promptFeedback') or {}).get('blockReason')
+        if bloqueo:
+            logger.warning('IA: Gemini bloqueó la consulta por seguridad (%s)', bloqueo)
+            raise GeminiRespuestaBloqueada()
+
+        candidatos = data.get('candidates') or []
+        if not candidatos:
+            logger.error('IA: Gemini no devolvió candidatos. body=%s', resp.text[:500])
+            raise GeminiError('Gemini no devolvió ninguna respuesta')
+
+        candidato = candidatos[0]
+        if candidato.get('finishReason') == 'SAFETY':
+            logger.warning('IA: candidato bloqueado por seguridad (finishReason=SAFETY)')
+            raise GeminiRespuestaBloqueada()
+
+        partes = (candidato.get('content') or {}).get('parts') or []
+        texto = partes[0].get('text') if partes else None
+        if not texto:
+            logger.error('IA: candidato sin texto utilizable. candidato=%s', candidato)
+            raise GeminiError('Gemini devolvió una respuesta sin contenido de texto')
+
+        try:
+            return json.loads(texto)
+        except json.JSONDecodeError as exc:
+            logger.error('IA: no se pudo parsear el JSON de Gemini: %s | texto=%s', exc, texto[:500])
+            raise GeminiError('Respuesta de Gemini en formato inesperado')
+
+    # Se agotaron los intentos de conexión (timeout/red) sin obtener respuesta.
+    logger.error('IA: no se pudo conectar con Gemini tras %s intentos: %s', INTENTOS, ultimo_error)
+    raise GeminiError(str(ultimo_error))
+
+
+def _palabras_clave_de_respaldo(consulta):
+    """Sin IA disponible: separa la consulta en palabras y descarta
+    conectores comunes en español, en vez de buscar la oración completa."""
+    palabras = re.findall(r'[a-záéíóúüñ]+', consulta.lower())
+    utiles = [p for p in palabras if p not in STOPWORDS_ES and len(p) > 2]
+    return utiles or [consulta]
+
+
+def _buscar_productos(palabras_clave, precio_maximo=None):
+    """
+    Filtra productos por palabras clave, sin distinguir acentos ni
+    mayúsculas, y opcionalmente por presupuesto máximo.
+
+    La comparación de texto se hace en Python y no con icontains de
+    Postgres: sin la extensión 'unaccent' habilitada en la base de datos,
+    Postgres SÍ distingue acentos ('microfono' no encontraría 'Micrófono').
+    Para un catálogo del tamaño de un proyecto escolar, traer los productos
+    y comparar en memoria es rápido y evita depender de una extensión de
+    Postgres que podría no estar disponible o requerir permisos que el
+    usuario de la base de datos no tenga.
+    """
+    queryset = Producto.objects.select_related('categoria').prefetch_related('imagenes').all()
+    if precio_maximo is not None:
+        queryset = queryset.filter(precio__lte=precio_maximo)
+
+    productos = list(queryset)
+
+    palabras_utiles = [p for p in (palabras_clave or []) if p and not p.isdigit()]
+    if not palabras_utiles:
+        return productos
+
+    palabras_normalizadas = [_normalizar_texto(p) for p in palabras_utiles]
+
+    seleccionados = []
+    for producto in productos:
+        texto_producto = _normalizar_texto(
+            f'{producto.nombre} {producto.descripcion} '
+            f'{producto.categoria.nombre if producto.categoria_id else ""}'
         )
-        respuesta['datos'] = list(pedidos)
-        respuesta['tipo'] = 'listar'
+        if any(palabra in texto_producto for palabra in palabras_normalizadas):
+            seleccionados.append(producto)
+    return seleccionados
 
-    # 6. Listar categorías
-    elif re.search(r'\b(categorías|categorias)\b', pregunta):
-        categorias = Categoria.objects.all().values('id', 'nombre')
-        respuesta['datos'] = list(categorias)
-        respuesta['tipo'] = 'listar'
 
-    # 7. Productos por categoría (ej. "productos de electrónica")
-    elif re.search(r'productos\s+de\s+(\w+)', pregunta):
-        match = re.search(r'productos\s+de\s+(\w+)', pregunta)
-        if match:
-            categoria_nombre = match.group(1)
-            productos = Producto.objects.filter(categoria__nombre__icontains=categoria_nombre).values('id', 'nombre', 'precio', 'stock')
-            respuesta['datos'] = list(productos)
-            respuesta['tipo'] = 'listar'
+class BusquedaIAThrottle(SimpleRateThrottle):
+    """
+    Límite propio de peticiones a este endpoint (30 por minuto, por IP), para
+    que un doble clic o un bucle accidental en el frontend no agote la cuota
+    gratuita de Gemini. A diferencia de AnonRateThrottle (que solo limita a
+    quien NO tiene sesión), esta clase limita a cualquiera que llame al
+    endpoint, esté o no logueado, usando siempre la IP como identificador.
+
+    "rate" se define aquí mismo como atributo de clase a propósito: DRF solo
+    exige agregar algo a settings.py (DEFAULT_THROTTLE_RATES) cuando se usa
+    "scope" sin "rate" explícito. Al ponerlo aquí, todo el comportamiento del
+    límite queda en un solo lugar, sin tocar settings.py.
+    """
+    scope = 'busqueda_ia'
+    rate = '30/min'
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {'scope': self.scope, 'ident': self.get_ident(request)}
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([BusquedaIAThrottle])
+def busqueda_inteligente(request):
+    """
+    Búsqueda inteligente de productos para el CLIENTE — pública, sin login,
+    igual que ya se puede hacer GET a /api/productos/ sin autenticarse.
+    (Si mandas un token vencido en Postman de todos modos te dará 401 antes
+    de llegar aquí: quita el header Authorization para probar este endpoint.)
+
+    POST /api/ia/   body: {"consulta": "quiero un micrófono para grabar podcasts"}
+
+    Solo toca catálogo público (Producto/Categoria) — nunca ventas, stock
+    interno ni datos de otros usuarios.
+    """
+    consulta = request.data.get('consulta')
+    consulta = str(consulta).strip() if consulta is not None else ''
+
+    if not consulta:
+        return Response(
+            {'error': 'El campo "consulta" no puede estar vacío'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    if len(consulta) > MAX_LARGO_CONSULTA:
+        return Response(
+            {'error': f'La consulta es demasiado larga (máximo {MAX_LARGO_CONSULTA} caracteres).'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    presupuesto_maximo = _extraer_presupuesto(consulta)
+
+    usando_ia = True
+    desde_cache = False
+    aviso = None
+    categoria_sugerida = None
+    mensaje = None
+
+    clave_cache = _clave_cache_interpretacion(consulta)
+    interpretacion_cacheada = cache.get(clave_cache)
+
+    try:
+        if interpretacion_cacheada is not None:
+            interpretacion = interpretacion_cacheada
+            desde_cache = True
+        elif _en_cooldown_por_cuota():
+            logger.info('IA: en cooldown por cuota excedida, se usa el respaldo sin llamar a Gemini.')
+            raise GeminiCuotaExcedida()
         else:
-            respuesta['error'] = 'No se pudo identificar la categoría'
+            categorias = list(Categoria.objects.values_list('nombre', flat=True))
+            interpretacion = _interpretar_consulta(consulta, categorias)
+            cache.set(clave_cache, interpretacion, TTL_CACHE_INTERPRETACION)
 
-    # 8. Si contiene "producto" (fallback)
-    elif 'producto' in pregunta:
-        productos = Producto.objects.all().values('id', 'nombre', 'precio', 'stock')[:20]
-        respuesta['datos'] = list(productos)
-        respuesta['tipo'] = 'listar'
+        palabras_clave = [p for p in interpretacion.get('palabras_clave', []) if p] or _palabras_clave_de_respaldo(consulta)
+        categoria_sugerida = interpretacion.get('categoria_sugerida') or None
+        mensaje = interpretacion.get('mensaje') or None
 
-    # 9. Si contiene "usuario" (fallback) - se incluye el rol desde el perfil
-    elif 'usuario' in pregunta:
-        usuarios = User.objects.select_related('perfil').all().values(
-            'id', 'email', 'is_active', 'perfil__rol'
-        )[:20]
-        # Renombrar campo para claridad
-        usuarios = [{'id': u['id'], 'email': u['email'], 'is_active': u['is_active'], 'rol': u['perfil__rol']} for u in usuarios]
-        respuesta['datos'] = usuarios
-        respuesta['tipo'] = 'listar'
+    except GeminiNoConfigurado:
+        usando_ia = False
+        aviso = 'La búsqueda con IA no está configurada (falta GEMINI_API_KEY en el .env). Mostrando búsqueda por palabras.'
+        palabras_clave = _palabras_clave_de_respaldo(consulta)
+    except GeminiCuotaExcedida:
+        usando_ia = False
+        aviso = 'Se alcanzó el límite de uso gratuito de Gemini por ahora. Mostrando búsqueda por palabras mientras tanto.'
+        palabras_clave = _palabras_clave_de_respaldo(consulta)
+    except GeminiRespuestaBloqueada:
+        usando_ia = False
+        aviso = 'Tu búsqueda no pudo procesarse por los filtros de seguridad del asistente. Intenta reformularla.'
+        palabras_clave = _palabras_clave_de_respaldo(consulta)
+    except GeminiError:
+        usando_ia = False
+        aviso = 'No se pudo contactar al asistente de IA en este momento. Mostrando búsqueda por palabras.'
+        palabras_clave = _palabras_clave_de_respaldo(consulta)
 
-    else:
-        respuesta['error'] = (
-            'No entendí tu pregunta. Prueba con: "lista productos", "cuántos usuarios", '
-            '"ventas totales", "pedidos recientes", "stock bajo", etc.'
-        )
+    productos = _buscar_productos(palabras_clave, presupuesto_maximo)
+    total = len(productos)
+    serializer = ProductoSerializer(productos, many=True, context={'request': request})
 
-    # Si no hubo datos y no hay error, se asigna mensaje
-    if respuesta['datos'] is None and respuesta['error'] is None:
-        respuesta['datos'] = {'mensaje': 'No se encontraron resultados para tu consulta'}
+    if not mensaje:
+        # Respaldo sin IA (o la IA no mandó mensaje): texto genérico pero
+        # que igual se siente como respuesta, no como un JSON pelón.
+        if total == 0 and presupuesto_maximo is not None:
+            mensaje = (
+                f'No encontré productos por ${presupuesto_maximo:,.2f} o menos con esas palabras. '
+                '¿Ajustamos el presupuesto o la búsqueda?'
+            )
+        elif total == 0:
+            mensaje = 'No encontré productos que coincidan con tu búsqueda. ¿Puedes describirlo de otra forma?'
+        elif total == 1:
+            mensaje = 'Encontré 1 producto que podría interesarte:'
+        else:
+            mensaje = f'Encontré {total} productos que podrían interesarte:'
 
-    return Response(respuesta)
+    return Response({
+        'consulta': consulta,
+        'mensaje': mensaje,
+        'usando_ia': usando_ia,
+        'desde_cache': desde_cache,
+        'aviso': aviso,
+        'palabras_clave_interpretadas': palabras_clave,
+        'categoria_sugerida': categoria_sugerida,
+        'presupuesto_detectado': presupuesto_maximo,
+        'total_resultados': total,
+        'productos': serializer.data,
+    }, status=status.HTTP_200_OK)

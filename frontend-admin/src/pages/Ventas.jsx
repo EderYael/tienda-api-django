@@ -1,8 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
+import { useToast } from '../context/ToastContext.jsx'
 import { exportarCSV } from '../utils/csv.js'
+import Modal from '../components/Modal.jsx'
+import Spinner from '../components/Spinner.jsx'
 import { SkeletonTarjetas, SkeletonFilas } from '../components/Skeleton.jsx'
-import { IconDownload, IconFilterX, IconDollarSign, IconShoppingCart, IconTrendingUp } from '../components/icons.jsx'
+import {
+  IconDownload, IconFilterX, IconDollarSign, IconShoppingCart, IconTrendingUp, IconStar
+} from '../components/icons.jsx'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip
 } from 'recharts'
@@ -56,7 +61,12 @@ function agrupar(pedidos, granularidad) {
 }
 
 export default function Ventas() {
+  const { showToast } = useToast()
+
   const [pedidos, setPedidos] = useState([])
+  const [productos, setProductos] = useState([])
+  const [categorias, setCategorias] = useState([])
+  const [resenas, setResenas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
 
@@ -66,13 +76,49 @@ export default function Ventas() {
   const [cliente, setCliente] = useState('')
   const [granularidad, setGranularidad] = useState('dia')
 
+  const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
+  const [generandoPDF, setGenerandoPDF] = useState(false)
+  const [generandoExcel, setGenerandoExcel] = useState(false)
+
   useEffect(() => {
     setCargando(true)
-    api('/api/pedidos/')
-      .then((data) => { setPedidos(data); setError('') })
-      .catch((err) => setError(err.message))
-      .finally(() => setCargando(false))
+    Promise.allSettled([
+      api('/api/pedidos/'),
+      api('/api/productos/'),
+      api('/api/categorias/'),
+      api('/api/resenas/'),
+    ]).then(([rPedidos, rProductos, rCategorias, rResenas]) => {
+      setPedidos(rPedidos.status === 'fulfilled' ? rPedidos.value : [])
+      setProductos(rProductos.status === 'fulfilled' ? rProductos.value : [])
+      setCategorias(rCategorias.status === 'fulfilled' ? rCategorias.value : [])
+      setResenas(rResenas.status === 'fulfilled' ? rResenas.value : [])
+
+      const fallos = []
+      if (rPedidos.status === 'rejected') fallos.push('pedidos')
+      if (rProductos.status === 'rejected') fallos.push('productos')
+      if (rCategorias.status === 'rejected') fallos.push('categorías')
+      if (rResenas.status === 'rejected') fallos.push('reseñas')
+      setError(fallos.length > 0 ? `No se pudo cargar: ${fallos.join(', ')}. El resto se muestra con lo disponible.` : '')
+    }).finally(() => setCargando(false))
   }, [])
+
+  const mapaCategoriaPorProducto = useMemo(() => {
+    const mapa = {}
+    productos.forEach((p) => { mapa[p.id] = p.categoria })
+    return mapa
+  }, [productos])
+
+  const mapaNombreCategoria = useMemo(() => {
+    const mapa = {}
+    categorias.forEach((c) => { mapa[c.id] = c.nombre })
+    return mapa
+  }, [categorias])
+
+  const mapaNombreProducto = useMemo(() => {
+    const mapa = {}
+    productos.forEach((p) => { mapa[p.id] = p.nombre })
+    return mapa
+  }, [productos])
 
   const filtrados = useMemo(() => {
     return pedidos.filter((p) => {
@@ -90,18 +136,111 @@ export default function Ventas() {
   const resumen = useMemo(() => {
     const validos = filtrados.filter((p) => p.estado !== 'cancelado')
     const totalVentas = validos.reduce((acc, p) => acc + parseFloat(p.total), 0)
+    const unidadesVendidas = validos.reduce(
+      (acc, p) => acc + p.detalles.reduce((a2, d) => a2 + d.cantidad, 0), 0
+    )
     return {
       totalVentas,
       totalPedidos: filtrados.length,
-      promedio: validos.length ? totalVentas / validos.length : 0
+      promedio: validos.length ? totalVentas / validos.length : 0,
+      unidadesVendidas,
     }
   }, [filtrados])
+
+  const distribucionEstado = useMemo(() => {
+    const conteo = {}
+    filtrados.forEach((p) => { conteo[p.estado] = (conteo[p.estado] || 0) + 1 })
+    return Object.entries(conteo).map(([estado, cantidad]) => ({ estado, cantidad }))
+  }, [filtrados])
+
+  const topProductos = useMemo(() => {
+    const cantidadPorProducto = {}
+    filtrados.forEach((p) => {
+      if (p.estado === 'cancelado') return
+      p.detalles.forEach((d) => {
+        cantidadPorProducto[d.producto] = (cantidadPorProducto[d.producto] || 0) + d.cantidad
+      })
+    })
+    return Object.entries(cantidadPorProducto)
+      .map(([id, cantidad]) => ({ nombre: mapaNombreProducto[id] || `#${id}`, cantidad }))
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 5)
+  }, [filtrados, mapaNombreProducto])
+
+  const topCategorias = useMemo(() => {
+    const totalPorCategoria = {}
+    filtrados.forEach((p) => {
+      if (p.estado === 'cancelado') return
+      p.detalles.forEach((d) => {
+        const catId = mapaCategoriaPorProducto[d.producto]
+        if (catId == null) return
+        totalPorCategoria[catId] = (totalPorCategoria[catId] || 0) + parseFloat(d.subtotal)
+      })
+    })
+    return Object.entries(totalPorCategoria)
+      .map(([id, total]) => ({ nombre: mapaNombreCategoria[id] || `#${id}`, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5)
+  }, [filtrados, mapaCategoriaPorProducto, mapaNombreCategoria])
+
+  const topClientes = useMemo(() => {
+    const porCliente = {}
+    filtrados.forEach((p) => {
+      if (p.estado === 'cancelado') return
+      if (!porCliente[p.usuario]) porCliente[p.usuario] = { username: p.usuario, totalPedidos: 0, totalGastado: 0 }
+      porCliente[p.usuario].totalPedidos += 1
+      porCliente[p.usuario].totalGastado += parseFloat(p.total)
+    })
+    return Object.values(porCliente).sort((a, b) => b.totalGastado - a.totalGastado).slice(0, 8)
+  }, [filtrados])
+
+  // Snapshot de inventario actual: NO depende del rango de fechas del filtro,
+  // porque el stock es "ahora mismo", no algo que haya pasado en el pasado.
+  const productosStockBajo = useMemo(() => {
+    return productos
+      .filter((p) => p.stock <= 5)
+      .map((p) => ({ nombre: p.nombre, stock: p.stock }))
+      .sort((a, b) => a.stock - b.stock)
+  }, [productos])
+
+  const detalleClienteSeleccionado = useMemo(() => {
+    if (!clienteSeleccionado) return null
+    const resumenCliente = topClientes.find((c) => c.username === clienteSeleccionado)
+    const pedidosDelCliente = filtrados
+      .filter((p) => p.usuario === clienteSeleccionado)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+    const resenasDelCliente = resenas.filter((r) => r.usuario === clienteSeleccionado)
+    const promedioCalificacion = resenasDelCliente.length
+      ? resenasDelCliente.reduce((acc, r) => acc + r.calificacion, 0) / resenasDelCliente.length
+      : null
+    return {
+      username: clienteSeleccionado,
+      totalPedidos: resumenCliente?.totalPedidos ?? pedidosDelCliente.length,
+      totalGastado: resumenCliente?.totalGastado ?? 0,
+      pedidos: pedidosDelCliente,
+      totalResenas: resenasDelCliente.length,
+      promedioCalificacion,
+    }
+  }, [clienteSeleccionado, topClientes, filtrados, resenas])
 
   function limpiarFiltros() {
     setDesde(''); setHasta(''); setEstado(''); setCliente('')
   }
 
-  function exportar() {
+  function construirDatosReporte() {
+    return {
+      filtros: { desde, hasta, estado, cliente },
+      resumen,
+      distribucionEstado,
+      topProductos,
+      topCategorias,
+      topClientes,
+      productosStockBajo,
+      pedidos: filtrados.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
+    }
+  }
+
+  function exportarCSVDetalle() {
     exportarCSV(
       filtrados,
       [
@@ -115,7 +254,36 @@ export default function Ventas() {
     )
   }
 
+  async function descargarPDF() {
+    setGenerandoPDF(true)
+    try {
+      // Import dinámico: jsPDF + jspdf-autotable solo se descargan cuando el
+      // admin de verdad hace click aquí, no en cada carga de la app.
+      const { generarReportePDF } = await import('../utils/reportes.js')
+      generarReportePDF(construirDatosReporte())
+      showToast('El reporte en PDF se descargó correctamente.', 'success')
+    } catch (err) {
+      showToast('No se pudo generar el PDF: ' + err.message, 'error')
+    } finally {
+      setGenerandoPDF(false)
+    }
+  }
+
+  async function descargarExcel() {
+    setGenerandoExcel(true)
+    try {
+      const { generarReporteExcel } = await import('../utils/reportes.js')
+      await generarReporteExcel(construirDatosReporte())
+      showToast('El reporte en Excel se descargó correctamente.', 'success')
+    } catch (err) {
+      showToast('No se pudo generar el Excel: ' + err.message, 'error')
+    } finally {
+      setGenerandoExcel(false)
+    }
+  }
+
   const hayFiltrosActivos = desde || hasta || estado || cliente
+  const hayDatosParaReporte = filtrados.length > 0
 
   return (
     <div>
@@ -124,9 +292,17 @@ export default function Ventas() {
           <h1>Ventas</h1>
           <p>Filtra, agrupa y exporta el detalle de ventas</p>
         </div>
-        <button className="btn btn-secundario" onClick={exportar} disabled={filtrados.length === 0}>
-          <IconDownload size={15} /> Exportar CSV
-        </button>
+        <div className="acciones-fila">
+          <button className="btn btn-secundario" onClick={exportarCSVDetalle} disabled={!hayDatosParaReporte}>
+            <IconDownload size={15} /> CSV
+          </button>
+          <button className="btn btn-secundario" onClick={descargarPDF} disabled={!hayDatosParaReporte || generandoPDF}>
+            {generandoPDF ? <Spinner size={13} oscuro /> : <IconDownload size={15} />} PDF
+          </button>
+          <button className="btn btn-secundario" onClick={descargarExcel} disabled={!hayDatosParaReporte || generandoExcel}>
+            {generandoExcel ? <Spinner size={13} oscuro /> : <IconDownload size={15} />} Excel
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-msg">{error}</div>}
@@ -205,6 +381,46 @@ export default function Ventas() {
         )}
       </div>
 
+      {/* Top categorías + Top clientes */}
+      <div className="graficas-grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 20 }}>
+        <div className="grafica-tarjeta">
+          <h3 style={{ margin: '0 0 4px 0' }}>Categorías con más ingresos</h3>
+          <p className="grafica-sub">Dentro del filtro actual</p>
+          {topCategorias.length === 0 ? (
+            <div className="vacio">Sin datos suficientes todavía.</div>
+          ) : (
+            <ul className="lista-ranking">
+              {topCategorias.map((c, i) => (
+                <li key={c.nombre}>
+                  <span className="lista-ranking-num">{i + 1}</span>
+                  <span className="lista-ranking-nombre">{c.nombre}</span>
+                  <span className="lista-ranking-valor">${c.total.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="grafica-tarjeta">
+          <h3 style={{ margin: '0 0 4px 0' }}>Mejores clientes</h3>
+          <p className="grafica-sub">Click para ver más detalle</p>
+          {topClientes.length === 0 ? (
+            <div className="vacio">Sin datos suficientes todavía.</div>
+          ) : (
+            <ul className="lista-ranking lista-ranking-clicable">
+              {topClientes.map((c, i) => (
+                <li key={c.username} onClick={() => setClienteSeleccionado(c.username)} tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setClienteSeleccionado(c.username) }}>
+                  <span className="lista-ranking-num">{i + 1}</span>
+                  <span className="lista-ranking-nombre">{c.username}</span>
+                  <span className="lista-ranking-valor">${c.totalGastado.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
       {/* Detalle */}
       <div className="tarjeta">
         <table>
@@ -223,7 +439,11 @@ export default function Ventas() {
                 .map((p) => (
                   <tr key={p.id}>
                     <td>#{p.id}</td>
-                    <td>{p.usuario}</td>
+                    <td>
+                      <button className="enlace-cliente" onClick={() => setClienteSeleccionado(p.usuario)}>
+                        {p.usuario}
+                      </button>
+                    </td>
                     <td>{new Date(p.fecha).toLocaleString('es-MX')}</td>
                     <td><span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{p.estado}</span></td>
                     <td>${parseFloat(p.total).toFixed(2)}</td>
@@ -233,6 +453,55 @@ export default function Ventas() {
           </tbody>
         </table>
       </div>
+
+      <Modal
+        abierto={!!clienteSeleccionado}
+        onClose={() => setClienteSeleccionado(null)}
+        titulo={clienteSeleccionado || ''}
+        ancho="480px"
+      >
+        {detalleClienteSeleccionado && (
+          <div className="detalle-cliente">
+            <div className="detalle-cliente-stats">
+              <div>
+                <span className="perfil-etiqueta">Pedidos (en el filtro)</span>
+                <span className="perfil-valor">{detalleClienteSeleccionado.totalPedidos}</span>
+              </div>
+              <div>
+                <span className="perfil-etiqueta">Total gastado</span>
+                <span className="perfil-valor">${detalleClienteSeleccionado.totalGastado.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="perfil-etiqueta">Calificación otorgada</span>
+                <span className="perfil-valor">
+                  {detalleClienteSeleccionado.promedioCalificacion != null ? (
+                    <>
+                      {detalleClienteSeleccionado.promedioCalificacion.toFixed(1)}
+                      <IconStar size={13} filled style={{ marginLeft: 4, color: '#f59e0b', verticalAlign: 'middle' }} />
+                      <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--texto-claro)' }}> ({detalleClienteSeleccionado.totalResenas})</span>
+                    </>
+                  ) : 'Sin reseñas'}
+                </span>
+              </div>
+            </div>
+
+            <h4 className="detalle-cliente-subtitulo">Pedidos en este filtro</h4>
+            {detalleClienteSeleccionado.pedidos.length === 0 ? (
+              <div className="vacio">No tiene pedidos en el rango/filtro actual.</div>
+            ) : (
+              <ul className="detalle-cliente-pedidos">
+                {detalleClienteSeleccionado.pedidos.map((p) => (
+                  <li key={p.id}>
+                    <span>#{p.id} · {new Date(p.fecha).toLocaleDateString('es-MX')}</span>
+                    <span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{p.estado}</span>
+                    <span>${parseFloat(p.total).toFixed(2)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -13,10 +13,16 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import re
-
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Carga variables de entorno desde .env (si existe) hacia os.environ.
+# IMPORTANTE: esto solo se lee una vez, al ARRANCAR el servidor. Si editas
+# el .env con el servidor ya corriendo, tienes que reiniciarlo (Ctrl+C y
+# `python manage.py runserver` de nuevo) para que tome el cambio.
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production

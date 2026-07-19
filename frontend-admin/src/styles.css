@@ -1289,6 +1289,19 @@ input[type="file"]:hover {
   gap: 12px;
 }
 
+.tarjeta-kpi-clicable {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.tarjeta-kpi-clicable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+}
+.tarjeta-kpi-clicable:focus-visible {
+  outline: 2px solid var(--color-primario);
+  outline-offset: 2px;
+}
+
 .tarjeta-kpi-encabezado {
   display: flex;
   align-items: center;
@@ -1463,4 +1476,63 @@ input[type="file"]:hover {
   background: var(--blanco);
   color: var(--color-primario);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* =========================================
+   RANKINGS (top categorías / top clientes) en Ventas
+========================================= */
+.lista-ranking { list-style: none; margin: 4px 0 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.lista-ranking li {
+  display: flex; align-items: center; gap: 12px; padding: 10px 6px;
+  border-bottom: 1px solid var(--gris-borde);
+}
+.lista-ranking li:last-child { border-bottom: none; }
+.lista-ranking-num {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--gris-fondo);
+  color: var(--texto-medio); font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.lista-ranking-nombre { flex: 1; font-size: 13.5px; color: var(--texto-oscuro); font-weight: 500; }
+.lista-ranking-valor { font-size: 13.5px; font-weight: 700; color: var(--texto-oscuro); }
+
+.lista-ranking-clicable li { cursor: pointer; border-radius: 8px; transition: background 0.15s; }
+.lista-ranking-clicable li:hover { background: var(--gris-fondo); }
+.lista-ranking-clicable li:focus-visible { outline: 2px solid var(--color-primario); outline-offset: -2px; }
+
+.enlace-cliente {
+  background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+  color: var(--color-primario); font-weight: 600; text-decoration: none;
+}
+.enlace-cliente:hover { text-decoration: underline; }
+
+/* =========================================
+   MODAL: Detalle de cliente
+========================================= */
+.detalle-cliente-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  padding: 16px; background: var(--gris-fondo); border-radius: var(--radio-boton);
+  margin-bottom: 20px;
+}
+.detalle-cliente-stats > div { display: flex; flex-direction: column; gap: 4px; }
+.detalle-cliente-subtitulo { font-size: 13px; font-weight: 700; color: var(--texto-medio); margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 0.3px; }
+.detalle-cliente-pedidos { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.detalle-cliente-pedidos li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 4px; border-bottom: 1px solid var(--gris-borde); font-size: 13px; color: var(--texto-medio);
+}
+.detalle-cliente-pedidos li:last-child { border-bottom: none; }
+
+/* =========================================
+   Chip de filtro activo (ej. viniendo de un KPI del Dashboard)
+========================================= */
+.chip-filtro-activo {
+  display: flex; align-items: center; gap: 12px; justify-content: space-between;
+  background: var(--naranja-fondo); color: #92400e; border: 1px solid #fde68a;
+  padding: 10px 16px; border-radius: var(--radio-boton); font-size: 13px; font-weight: 500;
+  margin-bottom: 16px;
+}
+.chip-filtro-activo button {
+  display: flex; align-items: center; gap: 5px; background: none; border: none;
+  color: #92400e; font-weight: 700; font-size: 12.5px; cursor: pointer; text-decoration: underline;
+  flex-shrink: 0;
 }

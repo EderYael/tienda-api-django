@@ -6,7 +6,7 @@ from .views import (
     DireccionViewSet, PedidoViewSet, ResenaViewSet,
     ver_carrito, agregar_al_carrito, actualizar_carrito,
     eliminar_del_carrito, vaciar_carrito, confirmar_carrito,
-    ia_endpoint
+    busqueda_inteligente
 )
 
 router = DefaultRouter()
@@ -29,6 +29,6 @@ urlpatterns = [
     path('carrito/vaciar/', vaciar_carrito),
     path('carrito/confirmar/', confirmar_carrito),
 
-    # Endpoint de IA
-    path('ia/', ia_endpoint),
+    # Búsqueda inteligente con IA (pública, para el cliente)
+    path('ia/', busqueda_inteligente),
 ] + router.urls
