@@ -7,3 +7,9 @@ __pycache__/
 media/
 staticfiles/
 .env
+
+# Expo / React Native (para la aplicación móvil)
+node_modules/
+.expo/
+dist/
+web-build/
