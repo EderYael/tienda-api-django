@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import re
+import os
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -163,6 +164,9 @@ CACHES = {
 }
 
 CORS_ALLOW_ALL_ORIGINS = True
+
+# Clave secreta de Stripe (modo prueba). Se lee del .env, nunca se sube al repo.
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",       

@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes, action
 from rest_framework.response import Response
 from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -7,6 +7,9 @@ from rest_framework.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
+from django.conf import settings
+from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import filters
 import re
 import os
@@ -14,18 +17,21 @@ import json
 import logging
 import requests
 import unicodedata
+import stripe
 
 logger = logging.getLogger(__name__)
 
-from .models import Categoria, Producto, ImagenProducto, Direccion, Pedido, DetallePedido, Resena
+from .models import Categoria, Producto, ImagenProducto, Direccion, Pedido, DetallePedido, Resena, PreguntaProducto
 from .serializers import (
     RegistroSerializer, PerfilSerializer, UsuarioAdminSerializer,
     CategoriaSerializer, ImagenProductoSerializer, ProductoSerializer,
-    DireccionSerializer, PedidoSerializer, ResenaSerializer
+    DireccionSerializer, PedidoSerializer, ResenaSerializer, PagoTarjetaSerializer,
+    PreguntaProductoSerializer
 )
 from .permissions import (
     EsAdministradorOSoloLectura, EsPropietarioOAdministrador,
-    EsClienteRegistrado, EsSoloAdministrador, EsAutorDeResenaOAdministrador
+    EsClienteRegistrado, EsSoloAdministrador, EsAutorDeResenaOAdministrador,
+    EsAutorDePreguntaOAdministrador
 )
 
 
@@ -87,6 +93,18 @@ class DireccionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(usuario=self.request.user)
 
+    @action(detail=True, methods=['post'], url_path='marcar-principal')
+    def marcar_principal(self, request, pk=None):
+        """Marca esta dirección como la principal del usuario y, en la
+        misma operación, le quita esa marca a cualquier otra — así nunca
+        quedan dos direcciones "principales" al mismo tiempo."""
+        direccion = self.get_object()
+        with transaction.atomic():
+            Direccion.objects.filter(usuario=direccion.usuario).exclude(id=direccion.id).update(es_principal=False)
+            direccion.es_principal = True
+            direccion.save()
+        return Response(DireccionSerializer(direccion).data, status=status.HTTP_200_OK)
+
 
 # ---------- Categorías (invitados/registrados leen, solo admin escribe) ----------
 
@@ -120,8 +138,41 @@ class ImagenProductoViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(producto_id=producto_id)
         return queryset
 
+    @action(detail=True, methods=['post'], url_path='marcar-principal')
+    def marcar_principal(self, request, pk=None):
+        """Marca esta imagen como la principal del producto y le quita esa
+        marca a las demás imágenes del MISMO producto, en una sola
+        operación — nunca quedan dos imágenes "principales" a la vez."""
+        imagen = self.get_object()
+        with transaction.atomic():
+            ImagenProducto.objects.filter(producto=imagen.producto).exclude(id=imagen.id).update(es_principal=False)
+            imagen.es_principal = True
+            imagen.save()
+        return Response(ImagenProductoSerializer(imagen).data, status=status.HTTP_200_OK)
+
 
 # ---------- Pedidos (usuario ve/gestiona los suyos, admin ve todo) ----------
+
+# Simulador de pago con tarjeta (nunca se conecta a una pasarela real). Usa
+# los mismos números de prueba públicos que Stripe, así que sirve para
+# demostrar de forma predecible un pago aprobado (cualquier número válido
+# por Luhn que no esté en esta tabla, ej. 4242 4242 4242 4242) y uno
+# rechazado (los números de abajo).
+TARJETAS_RECHAZADAS = {
+    '4000000000000002': 'Tarjeta rechazada por el banco emisor.',
+    '4000000000009995': 'Fondos insuficientes.',
+    '4000000000000069': 'Tarjeta vencida.',
+    '4000000000000127': 'Código de seguridad (CVV) incorrecto.',
+}
+
+
+def _simular_pago_tarjeta(datos_tarjeta):
+    """Devuelve (aprobado: bool, motivo_rechazo: str | None)."""
+    numero = datos_tarjeta['numero_tarjeta']
+    if numero in TARJETAS_RECHAZADAS:
+        return False, TARJETAS_RECHAZADAS[numero]
+    return True, None
+
 
 class PedidoViewSet(viewsets.ModelViewSet):
     serializer_class = PedidoSerializer
@@ -138,6 +189,208 @@ class PedidoViewSet(viewsets.ModelViewSet):
     def get_serializer_context(self):
         return {'request': self.request}
 
+    # El campo "estado" nunca se edita con un PUT/PATCH libre: solo a través
+    # de las acciones de abajo, que son las únicas que validan el flujo
+    # (pendiente_pago -> pagado -> enviado -> entregado, o cancelado).
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': (
+                'Un pedido no se edita directamente. Usa una de estas acciones: '
+                'pagar-tarjeta, confirmar-deposito, marcar-enviado, marcar-entregado o cancelar.'
+            )},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    partial_update = update
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Un pedido no se elimina; si ya no procede, cancélalo indicando el motivo.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    @action(detail=True, methods=['post'], url_path='pagar-tarjeta')
+    def pagar_tarjeta(self, request, pk=None):
+        """El dueño del pedido (o un administrador) intenta pagar con
+        tarjeta. Requiere numero_tarjeta, nombre_titular, mes_expiracion,
+        anio_expiracion y cvv en el body."""
+        pedido = self.get_object()
+
+        if pedido.metodo_pago != 'tarjeta':
+            return Response(
+                {'error': 'Este pedido no se paga con tarjeta.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if pedido.estado != 'pendiente_pago':
+            return Response(
+                {'error': f'Este pedido ya está "{pedido.get_estado_display()}", no se puede volver a pagar.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        datos = PagoTarjetaSerializer(data=request.data)
+        datos.is_valid(raise_exception=True)
+
+        aprobado, motivo_rechazo = _simular_pago_tarjeta(datos.validated_data)
+        if not aprobado:
+            return Response(
+                {'error': f'Pago rechazado: {motivo_rechazo}'},
+                status=status.HTTP_402_PAYMENT_REQUIRED
+            )
+
+        pedido.estado = 'pagado'
+        pedido.save()
+        return Response({'mensaje': 'Pago aprobado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='iniciar-pago-stripe')
+    def iniciar_pago_stripe(self, request, pk=None):
+        """El dueño (o admin) inicia un pago real con Stripe Checkout.
+        Devuelve la URL de la página de pago hospedada por Stripe; la app
+        la abre en el navegador del sistema, nunca vemos el número de
+        tarjeta en nuestro servidor."""
+        pedido = self.get_object()
+
+        if pedido.metodo_pago != 'tarjeta':
+            return Response({'error': 'Este pedido no se paga con tarjeta.'}, status=status.HTTP_400_BAD_REQUEST)
+        if pedido.estado != 'pendiente_pago':
+            return Response(
+                {'error': f'Este pedido ya está "{pedido.get_estado_display()}", no se puede volver a pagar.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+
+        # Si ya existe una sesión de Stripe para este pedido (el cliente le
+        # dio "pagar" antes), primero revisamos qué pasó con ella en vez de
+        # crear una sesión nueva a ciegas — así evitamos que un cliente que
+        # ya pagó, o que todavía tiene la ventana de pago abierta, termine
+        # generando un SEGUNDO cobro por el mismo pedido.
+        if pedido.stripe_session_id:
+            try:
+                sesion_existente = stripe.checkout.Session.retrieve(pedido.stripe_session_id)
+            except stripe.error.StripeError:
+                sesion_existente = None
+
+            if sesion_existente is not None:
+                if sesion_existente.payment_status == 'paid':
+                    pedido.estado = 'pagado'
+                    pedido.save()
+                    return Response(
+                        {'ya_pagado': True, 'mensaje': 'Este pedido ya estaba pagado.', 'estado': pedido.estado},
+                        status=status.HTTP_200_OK
+                    )
+                if sesion_existente.status == 'open':
+                    # La sesión anterior sigue vigente (no expiró ni se
+                    # canceló): se reutiliza la misma, no se crea otra.
+                    return Response({'checkout_url': sesion_existente.url}, status=status.HTTP_200_OK)
+
+        try:
+            session = stripe.checkout.Session.create(
+                mode='payment',
+                line_items=[{
+                    'price_data': {
+                        'currency': 'mxn',
+                        'unit_amount': int(pedido.total * 100),  # Stripe usa centavos
+                        'product_data': {'name': f'Pedido #{pedido.id} - Tienda de Música'},
+                    },
+                    'quantity': 1,
+                }],
+                success_url=request.build_absolute_uri('/api/stripe/pago-exitoso/'),
+                cancel_url=request.build_absolute_uri('/api/stripe/pago-cancelado/'),
+                client_reference_id=str(pedido.id),
+                metadata={'pedido_id': pedido.id},
+            )
+        except stripe.error.StripeError as e:
+            return Response({'error': f'No se pudo iniciar el pago: {e.user_message or str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        pedido.stripe_session_id = session.id
+        pedido.save()
+        return Response({'checkout_url': session.url}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='verificar-pago-stripe')
+    def verificar_pago_stripe(self, request, pk=None):
+        """La app llama esto cuando el usuario vuelve de la página de
+        Stripe (haya pagado o no). Nunca confiamos en que "volvió" =
+        "pagó": le preguntamos a Stripe el estado real de la sesión."""
+        pedido = self.get_object()
+
+        if not pedido.stripe_session_id:
+            return Response({'error': 'Este pedido no tiene un pago de Stripe iniciado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if pedido.estado == 'pagado':
+            return Response({'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        try:
+            session = stripe.checkout.Session.retrieve(pedido.stripe_session_id)
+        except stripe.error.StripeError as e:
+            return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if session.payment_status == 'paid' and pedido.estado == 'pendiente_pago':
+            pedido.estado = 'pagado'
+            pedido.save()
+
+        return Response({'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='confirmar-deposito', permission_classes=[EsSoloAdministrador])
+    def confirmar_deposito(self, request, pk=None):
+        """Solo el administrador confirma que el depósito llegó."""
+        pedido = self.get_object()
+
+        if pedido.metodo_pago != 'deposito':
+            return Response({'error': 'Este pedido no se paga por depósito.'}, status=status.HTTP_400_BAD_REQUEST)
+        if pedido.estado != 'pendiente_pago':
+            return Response(
+                {'error': f'Este pedido ya está "{pedido.get_estado_display()}".'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        pedido.estado = 'pagado'
+        pedido.save()
+        return Response({'mensaje': 'Depósito confirmado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='marcar-enviado', permission_classes=[EsSoloAdministrador])
+    def marcar_enviado(self, request, pk=None):
+        pedido = self.get_object()
+        if pedido.estado != 'pagado':
+            return Response(
+                {'error': 'Solo se puede enviar un pedido que ya está pagado.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        pedido.estado = 'enviado'
+        pedido.save()
+        return Response({'mensaje': 'Pedido marcado como enviado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='marcar-entregado', permission_classes=[EsSoloAdministrador])
+    def marcar_entregado(self, request, pk=None):
+        pedido = self.get_object()
+        if pedido.estado != 'enviado':
+            return Response(
+                {'error': 'Solo se puede entregar un pedido que ya está enviado.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        pedido.estado = 'entregado'
+        pedido.save()
+        return Response({'mensaje': 'Pedido marcado como entregado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='cancelar')
+    def cancelar(self, request, pk=None):
+        """El dueño del pedido o un administrador pueden cancelar, siempre
+        que el pedido no esté ya entregado o cancelado, y siempre con motivo."""
+        pedido = self.get_object()
+        if pedido.estado in ('entregado', 'cancelado'):
+            return Response(
+                {'error': f'Un pedido "{pedido.get_estado_display()}" ya no se puede cancelar.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        motivo = (request.data.get('motivo') or '').strip()
+        if not motivo:
+            return Response({'error': 'Debes indicar el motivo de la cancelación.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        pedido.estado = 'cancelado'
+        pedido.motivo_cancelacion = motivo
+        pedido.save()
+        return Response({'mensaje': 'Pedido cancelado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
+
 
 # ---------- Reseñas (todos leen, registrado crea, autor/admin edita o borra) ----------
 
@@ -150,6 +403,47 @@ class ResenaViewSet(viewsets.ModelViewSet):
 
     def get_serializer_context(self):
         return {'request': self.request}
+
+
+# ---------- Preguntas y respuestas de producto (público leer, registrado pregunta, admin responde) ----------
+
+class PreguntaProductoViewSet(viewsets.ModelViewSet):
+    serializer_class = PreguntaProductoSerializer
+    permission_classes = [EsAutorDePreguntaOAdministrador]
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['pregunta', 'respuesta', 'usuario__username', 'producto__nombre']
+
+    def get_queryset(self):
+        queryset = PreguntaProducto.objects.all()
+        producto_id = self.request.query_params.get('producto')
+        if producto_id:
+            queryset = queryset.filter(producto_id=producto_id)
+        return queryset
+
+    def get_serializer_context(self):
+        return {'request': self.request}
+
+    # La respuesta NUNCA se edita con un PUT/PATCH libre: solo a través de
+    # la acción "responder" de abajo, restringida a administradores, para
+    # que fecha_respuesta siempre quede consistente con el momento real
+    # en que se contestó.
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Una pregunta no se edita directamente. Usa la acción "responder".'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    partial_update = update
+
+    @action(detail=True, methods=['post'], url_path='responder', permission_classes=[EsSoloAdministrador])
+    def responder(self, request, pk=None):
+        pregunta = self.get_object()
+        respuesta = (request.data.get('respuesta') or '').strip()
+        if not respuesta:
+            return Response({'error': 'La respuesta no puede estar vacía.'}, status=status.HTTP_400_BAD_REQUEST)
+        pregunta.respuesta = respuesta
+        pregunta.fecha_respuesta = timezone.now()
+        pregunta.save()
+        return Response(PreguntaProductoSerializer(pregunta).data, status=status.HTTP_200_OK)
 
 
 # ---------- Carrito (en memoria, exclusivo de clientes registrados) ----------
@@ -258,6 +552,13 @@ def confirmar_carrito(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    metodo_pago = request.data.get('metodo_pago')
+    if metodo_pago not in ('deposito', 'tarjeta'):
+        return Response(
+            {'error': 'Debes indicar metodo_pago: "deposito" o "tarjeta".'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
     with transaction.atomic():
         # Se bloquean las filas de producto para evitar condiciones de carrera
         # (dos usuarios comprando la última pieza al mismo tiempo).
@@ -279,7 +580,10 @@ def confirmar_carrito(request):
         if errores:
             return Response({'error': errores}, status=status.HTTP_400_BAD_REQUEST)
 
-        pedido = Pedido.objects.create(usuario=request.user, direccion=direccion, estado='pendiente')
+        pedido = Pedido.objects.create(
+            usuario=request.user, direccion=direccion,
+            estado='pendiente_pago', metodo_pago=metodo_pago
+        )
         total = 0
 
         for item in carrito:
@@ -303,7 +607,12 @@ def confirmar_carrito(request):
     _guardar_carrito(request.user.id, [])
 
     return Response(
-        {'mensaje': 'Pedido creado desde el carrito', 'pedido_id': pedido.id},
+        {
+            'mensaje': 'Pedido creado desde el carrito',
+            'pedido_id': pedido.id,
+            'metodo_pago': pedido.metodo_pago,
+            'estado': pedido.estado,
+        },
         status=status.HTTP_201_CREATED
     )
 
@@ -674,3 +983,24 @@ def busqueda_inteligente(request):
         'total_resultados': total,
         'productos': serializer.data,
     }, status=status.HTTP_200_OK)
+
+
+# ---------- Páginas públicas a las que Stripe redirige el navegador ----------
+# Estas NO son parte de la API para la app (no llevan JWT ni JSON): Stripe
+# manda al navegador del celular aquí después del pago. Solo muestran un
+# mensaje; la app confirma el pago real llamando a verificar-pago-stripe.
+
+def pago_exitoso(request):
+    return HttpResponse(
+        '<html><body style="font-family:sans-serif;text-align:center;padding:48px 16px;">'
+        '<h2>¡Pago recibido!</h2><p>Ya puedes cerrar esta ventana y volver a la app.</p>'
+        '</body></html>'
+    )
+
+
+def pago_cancelado(request):
+    return HttpResponse(
+        '<html><body style="font-family:sans-serif;text-align:center;padding:48px 16px;">'
+        '<h2>Pago cancelado</h2><p>Puedes cerrar esta ventana y volver a la app para intentar de nuevo.</p>'
+        '</body></html>'
+    )

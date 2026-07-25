@@ -55,10 +55,10 @@ export function CartProvider({ children }) {
     setItems([])
   }
 
-  async function confirmarPedido(direccionId) {
+  async function confirmarPedido(direccionId, metodoPago) {
     const resultado = await api('/api/carrito/confirmar/', {
       method: 'POST',
-      body: direccionId ? { direccion_id: direccionId } : {},
+      body: { ...(direccionId ? { direccion_id: direccionId } : {}), metodo_pago: metodoPago },
     })
     setItems([])
     return resultado

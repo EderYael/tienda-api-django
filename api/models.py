@@ -64,18 +64,29 @@ class Direccion(models.Model):
 
 
 class Pedido(models.Model):
+    # Flujo de estados (validado en las acciones de PedidoViewSet, nunca por
+    # edición libre del campo): pendiente_pago -> pagado -> enviado -> entregado.
+    # Desde cualquier estado no final se puede pasar a cancelado (con motivo).
     ESTADOS = (
-        ('pendiente', 'Pendiente'),
+        ('pendiente_pago', 'Pendiente de pago'),
         ('pagado', 'Pagado'),
         ('enviado', 'Enviado'),
+        ('entregado', 'Entregado'),
         ('cancelado', 'Cancelado'),
+    )
+    METODOS_PAGO = (
+        ('deposito', 'Depósito bancario'),
+        ('tarjeta', 'Tarjeta'),
     )
     usuario = models.ForeignKey(User, on_delete=models.CASCADE, related_name='pedidos')
     direccion = models.ForeignKey(
         Direccion, on_delete=models.SET_NULL, null=True, blank=True, related_name='pedidos'
     )
     fecha = models.DateTimeField(auto_now_add=True)
-    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
+    estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente_pago')
+    metodo_pago = models.CharField(max_length=20, choices=METODOS_PAGO, default='deposito')
+    motivo_cancelacion = models.TextField(blank=True, default='')
+    stripe_session_id = models.CharField(max_length=200, blank=True, default='')
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def __str__(self):
@@ -108,3 +119,24 @@ class Resena(models.Model):
 
     def __str__(self):
         return f"{self.usuario.username} - {self.producto.nombre} ({self.calificacion}★)"
+
+
+class PreguntaProducto(models.Model):
+    """
+    Preguntas públicas de clientes sobre un producto, con respuesta del
+    administrador — igual que la sección de "Preguntas y respuestas" de
+    Mercado Libre. Cualquiera puede leerlas (invitado incluido); solo un
+    usuario registrado puede preguntar, y solo un administrador responde
+    (a través de la acción "responder" del ViewSet, nunca por edición
+    libre, para que fecha_respuesta siempre quede correcta).
+    """
+    producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name='preguntas')
+    usuario = models.ForeignKey(User, on_delete=models.CASCADE, related_name='preguntas_hechas')
+    pregunta = models.TextField()
+    respuesta = models.TextField(blank=True, default='')
+    fecha_pregunta = models.DateTimeField(auto_now_add=True)
+    fecha_respuesta = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        estado = 'respondida' if self.respuesta else 'sin responder'
+        return f"Pregunta de {self.usuario.username} sobre {self.producto.nombre} ({estado})"

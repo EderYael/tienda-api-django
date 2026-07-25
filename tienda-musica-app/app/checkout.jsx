@@ -15,6 +15,7 @@ export default function Checkout() {
 
   const [direcciones, setDirecciones] = useState([])
   const [direccionElegida, setDireccionElegida] = useState(null)
+  const [metodoPago, setMetodoPago] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [confirmando, setConfirmando] = useState(false)
 
@@ -33,9 +34,13 @@ export default function Checkout() {
   async function manejarConfirmar() {
     setConfirmando(true)
     try {
-      const resultado = await confirmarPedido(direccionElegida)
-      showToast(`¡Pedido #${resultado.pedido_id} creado!`, 'success')
-      router.replace('/pedidos')
+      const resultado = await confirmarPedido(direccionElegida, metodoPago)
+      if (resultado.metodo_pago === 'tarjeta') {
+        router.replace(`/pagar-tarjeta?pedido_id=${resultado.pedido_id}`)
+      } else {
+        showToast(`¡Pedido #${resultado.pedido_id} creado! Queda pendiente de confirmar tu depósito.`, 'success')
+        router.replace('/pedidos')
+      }
     } catch (err) {
       showToast(err.message, 'error')
     } finally {
@@ -89,6 +94,38 @@ export default function Checkout() {
             </Pressable>
           ))
         )}
+
+        <Text style={estilos.seccionTitulo}>Método de pago</Text>
+        <Pressable
+          style={[estilos.opcionDireccion, metodoPago === 'deposito' && estilos.opcionDireccionActiva]}
+          onPress={() => setMetodoPago('deposito')}
+        >
+          <Ionicons
+            name={metodoPago === 'deposito' ? 'radio-button-on' : 'radio-button-off'}
+            size={20}
+            color={metodoPago === 'deposito' ? Colores.primario : Colores.textoClaro}
+          />
+          <Ionicons name="business-outline" size={20} color={Colores.textoMedio} />
+          <View style={{ flex: 1 }}>
+            <Text style={estilos.direccionAlias}>Depósito bancario</Text>
+            <Text style={estilos.direccionTexto}>Pagas fuera de la app y confirmamos cuando llegue</Text>
+          </View>
+        </Pressable>
+        <Pressable
+          style={[estilos.opcionDireccion, metodoPago === 'tarjeta' && estilos.opcionDireccionActiva]}
+          onPress={() => setMetodoPago('tarjeta')}
+        >
+          <Ionicons
+            name={metodoPago === 'tarjeta' ? 'radio-button-on' : 'radio-button-off'}
+            size={20}
+            color={metodoPago === 'tarjeta' ? Colores.primario : Colores.textoClaro}
+          />
+          <Ionicons name="card-outline" size={20} color={Colores.textoMedio} />
+          <View style={{ flex: 1 }}>
+            <Text style={estilos.direccionAlias}>Tarjeta</Text>
+            <Text style={estilos.direccionTexto}>Pago inmediato con Stripe</Text>
+          </View>
+        </Pressable>
       </ScrollView>
 
       <View style={estilos.barraInferior}>
@@ -96,7 +133,7 @@ export default function Checkout() {
           titulo="Confirmar pedido"
           onPress={manejarConfirmar}
           cargando={confirmando}
-          disabled={direcciones.length === 0 || !direccionElegida}
+          disabled={direcciones.length === 0 || !direccionElegida || !metodoPago}
         />
       </View>
     </View>

@@ -10,7 +10,8 @@ const ENLACES = [
   { to: '/pedidos', etiqueta: 'Pedidos' },
   { to: '/ventas', etiqueta: 'Ventas' },
   { to: '/usuarios', etiqueta: 'Usuarios' },
-  { to: '/resenas', etiqueta: 'Reseñas' }
+  { to: '/resenas', etiqueta: 'Reseñas' },
+  { to: '/preguntas', etiqueta: 'Preguntas' }
 ]
 
 export default function Layout() {
@@ -60,6 +61,7 @@ export default function Layout() {
     if (path.startsWith('/usuarios')) return '/usuarios'
     if (path.startsWith('/pedidos')) return '/pedidos'
     if (path.startsWith('/resenas')) return '/resenas'
+    if (path.startsWith('/preguntas')) return '/preguntas'
     return null
   }
 

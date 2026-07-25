@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import (
     Perfil, Categoria, Producto, ImagenProducto, Direccion,
-    Pedido, DetallePedido, Resena
+    Pedido, DetallePedido, Resena, PreguntaProducto
 )
 
 
@@ -122,7 +122,15 @@ class PedidoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Pedido
-        fields = ['id', 'usuario', 'direccion', 'fecha', 'estado', 'total', 'detalles']
+        fields = [
+            'id', 'usuario', 'direccion', 'fecha', 'estado', 'metodo_pago',
+            'motivo_cancelacion', 'total', 'detalles'
+        ]
+        # El estado y el motivo de cancelación NUNCA se editan por escritura
+        # directa del serializer: solo cambian a través de las acciones de
+        # PedidoViewSet (pagar-tarjeta, confirmar-deposito, marcar-enviado,
+        # marcar-entregado, cancelar), que validan el flujo correcto.
+        read_only_fields = ['estado', 'motivo_cancelacion']
 
     def create(self, validated_data):
         detalles_data = validated_data.pop('detalles')
@@ -137,6 +145,38 @@ class PedidoSerializer(serializers.ModelSerializer):
         return pedido
 
 
+class PagoTarjetaSerializer(serializers.Serializer):
+    """
+    Datos del simulador de tarjeta (nunca se guardan en la base de datos,
+    solo se usan en el momento para decidir aprobado/rechazado).
+    """
+    numero_tarjeta = serializers.RegexField(r'^\d{13,19}$')
+    nombre_titular = serializers.CharField(max_length=100)
+    mes_expiracion = serializers.IntegerField(min_value=1, max_value=12)
+    anio_expiracion = serializers.IntegerField(min_value=2000, max_value=2100)
+    cvv = serializers.RegexField(r'^\d{3,4}$')
+
+    def validate_numero_tarjeta(self, valor):
+        # Algoritmo de Luhn: el mismo checksum que usan las tarjetas reales,
+        # para que un número "inventado a lo tonto" se rechace antes de
+        # llegar a la simulación de aprobación/rechazo.
+        digitos = [int(d) for d in valor]
+        for i in range(len(digitos) - 2, -1, -2):
+            digitos[i] *= 2
+            if digitos[i] > 9:
+                digitos[i] -= 9
+        if sum(digitos) % 10 != 0:
+            raise serializers.ValidationError('Número de tarjeta inválido.')
+        return valor
+
+    def validate(self, datos):
+        from datetime import date
+        hoy = date.today()
+        if (datos['anio_expiracion'], datos['mes_expiracion']) < (hoy.year, hoy.month):
+            raise serializers.ValidationError('La tarjeta está vencida.')
+        return datos
+
+
 class ResenaSerializer(serializers.ModelSerializer):
     usuario = serializers.ReadOnlyField(source='usuario.username')
 
@@ -147,3 +187,18 @@ class ResenaSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         usuario = self.context['request'].user
         return Resena.objects.create(usuario=usuario, **validated_data)
+
+
+class PreguntaProductoSerializer(serializers.ModelSerializer):
+    usuario = serializers.ReadOnlyField(source='usuario.username')
+
+    class Meta:
+        model = PreguntaProducto
+        fields = ['id', 'producto', 'usuario', 'pregunta', 'respuesta', 'fecha_pregunta', 'fecha_respuesta']
+        # respuesta/fecha_respuesta NUNCA se editan por escritura directa:
+        # solo a través de la acción "responder" del ViewSet (solo admin).
+        read_only_fields = ['respuesta', 'fecha_respuesta']
+
+    def create(self, validated_data):
+        usuario = self.context['request'].user
+        return PreguntaProducto.objects.create(usuario=usuario, **validated_data)

@@ -80,3 +80,27 @@ class EsAutorDeResenaOAdministrador(permissions.BasePermission):
         if hasattr(request.user, 'perfil') and request.user.perfil.rol == 'administrador':
             return True
         return obj.usuario == request.user
+
+
+class EsAutorDePreguntaOAdministrador(permissions.BasePermission):
+    """
+    Cualquiera puede LEER preguntas (invitado incluido, como en Mercado
+    Libre). Solo usuarios registrados pueden CREAR preguntas. Para BORRAR:
+    el autor de la pregunta o un administrador. Responder NO pasa por
+    aquí: es una acción aparte, restringida solo a administradores.
+    """
+    message = 'Solo el autor de la pregunta o un administrador puede eliminarla.'
+
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return hasattr(request.user, 'perfil') and request.user.perfil.rol == 'registrado'
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if hasattr(request.user, 'perfil') and request.user.perfil.rol == 'administrador':
+            return True
+        return obj.usuario == request.user

@@ -9,6 +9,7 @@ import Pedidos from './pages/Pedidos.jsx'
 import Ventas from './pages/Ventas.jsx'
 import Usuarios from './pages/Usuarios.jsx'
 import Resenas from './pages/Resenas.jsx'
+import Preguntas from './pages/Preguntas.jsx'
 import Perfil from './pages/Perfil.jsx'
 import { estaAutenticado } from './api.js'
 
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="ventas" element={<Ventas />} />
           <Route path="usuarios" element={<Usuarios />} />
           <Route path="resenas" element={<Resenas />} />
+          <Route path="preguntas" element={<Preguntas />} />
           <Route path="perfil" element={<Perfil />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

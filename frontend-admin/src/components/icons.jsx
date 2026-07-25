@@ -79,3 +79,6 @@ export function IconBarChart(p) {
 export function IconFilterX(p) {
   return <svg {...base(p)}><path d="M4 4h16v2.17a2 2 0 0 1-.59 1.41L14 13v7l-4 2v-8.5L4.59 7.58A2 2 0 0 1 4 6.17Z" /></svg>
 }
+export function IconHelpCircle(p) {
+  return <svg {...base(p)}><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+}

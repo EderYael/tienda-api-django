@@ -50,6 +50,10 @@ export default function RootLayout() {
               name="checkout"
               options={{ headerShown: true, title: 'Confirmar pedido', presentation: 'modal' }}
             />
+            <Stack.Screen
+              name="pagar-tarjeta"
+              options={{ headerShown: true, title: 'Pagar con tarjeta', presentation: 'modal' }}
+            />
           </Stack>
         </CartProvider>
       </ToastProvider>

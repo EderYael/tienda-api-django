@@ -6,7 +6,7 @@ import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Spinner from '../components/Spinner.jsx'
 import { SkeletonFilas } from '../components/Skeleton.jsx'
-import { IconFilterX } from '../components/icons.jsx'
+import { IconFilterX, IconTrash, IconStar } from '../components/icons.jsx'
 import { validarProducto, erroresDeApi } from '../utils/validacion.js'
 
 const VACIO = { nombre: '', descripcion: '', precio: '', stock: '', categoria: '' }
@@ -26,7 +26,9 @@ export default function Productos() {
   const [editando, setEditando] = useState(null)
   const [form, setForm] = useState(VACIO)
   const [errores, setErrores] = useState({})
-  const [imagenSeleccionada, setImagenSeleccionada] = useState(null)
+  const [imagenesExistentes, setImagenesExistentes] = useState([])
+  const [imagenesNuevas, setImagenesNuevas] = useState([]) // File[]
+  const [subiendoImagen, setSubiendoImagen] = useState(false)
   const [guardando, setGuardando] = useState(false)
 
   const [confirmando, setConfirmando] = useState(null)
@@ -58,7 +60,8 @@ export default function Productos() {
     setEditando(null)
     setForm(VACIO)
     setErrores({})
-    setImagenSeleccionada(null)
+    setImagenesExistentes([])
+    setImagenesNuevas([])
     setModalAbierto(true)
   }
 
@@ -72,13 +75,42 @@ export default function Productos() {
       categoria: p.categoria
     })
     setErrores({})
-    setImagenSeleccionada(null)
+    setImagenesExistentes(p.imagenes || [])
+    setImagenesNuevas([])
     setModalAbierto(true)
   }
 
   function actualizarCampo(campo, valor) {
     setForm({ ...form, [campo]: valor })
     if (errores[campo]) setErrores({ ...errores, [campo]: null })
+  }
+
+  function agregarImagenesNuevas(archivos) {
+    setImagenesNuevas([...imagenesNuevas, ...Array.from(archivos)])
+  }
+
+  function quitarImagenNueva(indice) {
+    setImagenesNuevas(imagenesNuevas.filter((_, i) => i !== indice))
+  }
+
+  async function eliminarImagenExistente(imagen) {
+    try {
+      await api(`/api/imagenes-producto/${imagen.id}/`, { method: 'DELETE' })
+      setImagenesExistentes(imagenesExistentes.filter((i) => i.id !== imagen.id))
+      showToast('Imagen eliminada.', 'success')
+    } catch (err) {
+      showToast(err.message, 'error')
+    }
+  }
+
+  async function marcarImagenPrincipal(imagen) {
+    try {
+      await api(`/api/imagenes-producto/${imagen.id}/marcar-principal/`, { method: 'POST' })
+      setImagenesExistentes(imagenesExistentes.map((i) => ({ ...i, es_principal: i.id === imagen.id })))
+      showToast('Imagen principal actualizada.', 'success')
+    } catch (err) {
+      showToast(err.message, 'error')
+    }
   }
 
   async function guardar(e) {
@@ -106,12 +138,20 @@ export default function Productos() {
         productoGuardado = await api('/api/productos/', { method: 'POST', body })
       }
 
-      if (imagenSeleccionada) {
-        const fd = new FormData()
-        fd.append('producto', productoGuardado.id)
-        fd.append('imagen', imagenSeleccionada)
-        fd.append('es_principal', true)
-        await api('/api/imagenes-producto/', { method: 'POST', body: fd, isFormData: true })
+      if (imagenesNuevas.length > 0) {
+        setSubiendoImagen(true)
+        const sinImagenesPrevias = imagenesExistentes.length === 0
+        for (let i = 0; i < imagenesNuevas.length; i++) {
+          const fd = new FormData()
+          fd.append('producto', productoGuardado.id)
+          fd.append('imagen', imagenesNuevas[i])
+          // La primera imagen que se sube a un producto sin fotos todavía
+          // se marca como principal automáticamente; el resto, no (el admin
+          // puede cambiarla después con "Marcar como principal").
+          fd.append('es_principal', sinImagenesPrevias && i === 0)
+          await api('/api/imagenes-producto/', { method: 'POST', body: fd, isFormData: true })
+        }
+        setSubiendoImagen(false)
       }
 
       showToast(`"${form.nombre}" se ${editando ? 'actualizó' : 'creó'} correctamente.`, 'success')
@@ -126,6 +166,7 @@ export default function Productos() {
       }
     } finally {
       setGuardando(false)
+      setSubiendoImagen(false)
     }
   }
 
@@ -149,10 +190,14 @@ export default function Productos() {
     return cat ? cat.nombre : '—'
   }
 
-  function urlImagen(producto) {
+  function resolverUrlImagen(url) {
+    if (!url) return null
+    return url.startsWith('http') ? url : `${getBaseUrl()}${url}`
+  }
+
+  function urlImagenPrincipal(producto) {
     const principal = producto.imagenes?.find((i) => i.es_principal) || producto.imagenes?.[0]
-    if (!principal) return null
-    return principal.imagen.startsWith('http') ? principal.imagen : `${getBaseUrl()}${principal.imagen}`
+    return principal ? resolverUrlImagen(principal.imagen) : null
   }
 
   function badgeStock(stock) {
@@ -202,13 +247,19 @@ export default function Productos() {
               <tr><td colSpan="6"><div className="vacio">{soloStockBajo ? 'Ningún producto tiene stock bajo ahora mismo.' : 'Aún no hay productos. Crea el primero.'}</div></td></tr>
             ) : (
               productosMostrados.map((p) => {
-                const img = urlImagen(p)
+                const img = urlImagenPrincipal(p)
+                const totalImagenes = p.imagenes?.length || 0
                 return (
                   <tr key={p.id}>
                     <td>
-                      {img
-                        ? <img src={img} className="miniatura" alt={p.nombre} />
-                        : <div className="miniatura" />}
+                      <div style={{ position: 'relative', width: 'fit-content' }}>
+                        {img
+                          ? <img src={img} className="miniatura" alt={p.nombre} />
+                          : <div className="miniatura" />}
+                        {totalImagenes > 1 && (
+                          <span className="badge-contador-imagenes">{totalImagenes}</span>
+                        )}
+                      </div>
                     </td>
                     <td>{p.nombre}</td>
                     <td>{nombreCategoria(p.categoria)}</td>
@@ -228,7 +279,7 @@ export default function Productos() {
         </table>
       </div>
 
-      <Modal abierto={modalAbierto} onClose={() => setModalAbierto(false)} titulo={editando ? 'Editar producto' : 'Nuevo producto'} ancho="460px">
+      <Modal abierto={modalAbierto} onClose={() => setModalAbierto(false)} titulo={editando ? 'Editar producto' : 'Nuevo producto'} ancho="520px">
         <form onSubmit={guardar}>
           <label>Nombre</label>
           <input className={errores.nombre ? 'input-error' : ''} value={form.nombre} onChange={(e) => actualizarCampo('nombre', e.target.value)} />
@@ -259,15 +310,57 @@ export default function Productos() {
           </select>
           {errores.categoria && <span className="campo-error">{errores.categoria}</span>}
 
-          <label>Imagen {editando ? '(opcional, reemplaza la principal)' : ''}</label>
-          <input type="file" accept="image/*" onChange={(e) => setImagenSeleccionada(e.target.files[0])} />
-          {imagenSeleccionada && <span className="campo-ayuda">Seleccionada: {imagenSeleccionada.name}</span>}
+          <label>Imágenes (puedes seleccionar varias a la vez, como en un marketplace)</label>
+
+          {imagenesExistentes.length > 0 && (
+            <div className="galeria-imagenes">
+              {imagenesExistentes.map((img) => (
+                <div key={img.id} className="galeria-item">
+                  <img src={resolverUrlImagen(img.imagen)} alt="" />
+                  {img.es_principal && <span className="galeria-badge-principal">Principal</span>}
+                  <div className="galeria-acciones">
+                    {!img.es_principal && (
+                      <button type="button" title="Marcar como principal" onClick={() => marcarImagenPrincipal(img)}>
+                        <IconStar size={13} />
+                      </button>
+                    )}
+                    <button type="button" title="Eliminar" onClick={() => eliminarImagenExistente(img)}>
+                      <IconTrash size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {imagenesNuevas.length > 0 && (
+            <div className="galeria-imagenes">
+              {imagenesNuevas.map((archivo, i) => (
+                <div key={i} className="galeria-item galeria-item-pendiente">
+                  <img src={URL.createObjectURL(archivo)} alt="" />
+                  <span className="galeria-badge-pendiente">Nueva</span>
+                  <div className="galeria-acciones">
+                    <button type="button" title="Quitar" onClick={() => quitarImagenNueva(i)}>
+                      <IconTrash size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <input type="file" accept="image/*" multiple onChange={(e) => agregarImagenesNuevas(e.target.files)} />
+          <span className="campo-ayuda">
+            {imagenesExistentes.length === 0 && imagenesNuevas.length === 0
+              ? 'La primera imagen que subas será la principal.'
+              : 'Las imágenes nuevas se agregan a la galería; usa la estrella para elegir cuál es la principal.'}
+          </span>
 
           <div className="modal-acciones">
             <button type="button" className="btn btn-secundario" onClick={() => setModalAbierto(false)} disabled={guardando}>Cancelar</button>
             <button type="submit" className="btn btn-primario" disabled={guardando}>
               {guardando ? <Spinner size={14} /> : null}
-              {guardando ? 'Guardando...' : 'Guardar'}
+              {guardando ? (subiendoImagen ? 'Subiendo imágenes...' : 'Guardando...') : 'Guardar'}
             </button>
           </div>
         </form>
