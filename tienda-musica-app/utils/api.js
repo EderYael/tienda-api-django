@@ -7,7 +7,7 @@ const CLAVE_USERNAME = 'tienda_username'
 
 // URL por default para desarrollo: la IP de la VM de Django en la red local.
 // Se cambia desde la pantalla de "Configuración del servidor" en la app.
-const URL_POR_DEFAULT = 'http://192.168.0.37:8000'
+const URL_POR_DEFAULT = 'https://tienda-api-django.onrender.com'
 
 // Se llama una vez desde AuthContext al arrancar la app, para que api.js
 // pueda avisarle a AuthContext cuando la sesión se cae (token vencido y
