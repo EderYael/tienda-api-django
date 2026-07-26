@@ -31,7 +31,11 @@ const ETIQUETA_METODO = {
 }
 
 // Pasos del flujo normal (un pedido cancelado no sigue esta línea).
-const PASOS_FLUJO = ['pagado', 'enviado', 'entregado']
+const PASOS_FLUJO = [
+  { clave: 'pagado', etiqueta: 'Pagado' },
+  { clave: 'enviado', etiqueta: 'Enviado' },
+  { clave: 'entregado', etiqueta: 'Entregado' },
+]
 
 export default function Pedidos() {
   const router = useRouter()
@@ -128,131 +132,143 @@ export default function Pedidos() {
         const primerProducto = primerDetalle ? productosPorId[primerDetalle.producto] : null
         const urlMiniatura = primerProducto ? imagenPrincipal(primerProducto, baseUrl) : null
         const articulosExtra = item.detalles.length - 1
-        const pasoActual = PASOS_FLUJO.indexOf(item.estado)
+        const pasoActual = PASOS_FLUJO.findIndex((p) => p.clave === item.estado)
 
         return (
           <Pressable
-            style={estilos.tarjetaContenedor}
+            style={estilos.tarjeta}
             onPress={() => setExpandido(abierto ? null : item.id)}
           >
-            <View style={[estilos.franjaEstado, { backgroundColor: info.borde }]} />
-            <View style={estilos.tarjeta}>
-              <View style={estilos.encabezadoTarjeta}>
-                <View style={estilos.encabezadoIzquierda}>
-                  <Text style={estilos.numeroPedido}>Pedido #{item.id}</Text>
-                  <Text style={estilos.fecha}>{new Date(item.fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
-                </View>
-                <View style={[estilos.badge, { backgroundColor: info.fondo }]}>
-                  <Ionicons name={info.icono} size={12} color={info.texto} />
-                  <Text style={[estilos.badgeTexto, { color: info.texto }]}>{ETIQUETA_ESTADO[item.estado] || item.estado}</Text>
-                </View>
+            <View style={estilos.filaSuperior}>
+              <View style={[estilos.avatarEstado, { backgroundColor: info.fondo }]}>
+                <Ionicons name={info.icono} size={20} color={info.texto} />
               </View>
-
-              {/* Vista previa del primer producto, visible siempre (sin tener que expandir) */}
-              <View style={estilos.previaProducto}>
-                {urlMiniatura ? (
-                  <Image source={{ uri: urlMiniatura }} style={estilos.miniatura} resizeMode="cover" />
-                ) : (
-                  <View style={[estilos.miniatura, estilos.miniaturaVacia]}>
-                    <Ionicons name="musical-note-outline" size={16} color={Colores.textoClaro} />
-                  </View>
-                )}
-                <Text style={estilos.nombrePrimerProducto} numberOfLines={1}>
-                  {primerProducto ? primerProducto.nombre : `Producto #${primerDetalle?.producto}`}
-                  {articulosExtra > 0 && <Text style={estilos.masArticulos}>  +{articulosExtra} más</Text>}
-                </Text>
+              <View style={estilos.infoSuperior}>
+                <Text style={estilos.numeroPedido}>Pedido #{item.id}</Text>
+                <Text style={estilos.fecha}>{new Date(item.fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
               </View>
+              <View style={estilos.totalBloque}>
+                <Text style={estilos.totalEtiqueta}>Total</Text>
+                <Text style={estilos.total}>${parseFloat(item.total).toFixed(2)}</Text>
+              </View>
+            </View>
 
-              {/* Línea de progreso (solo para pedidos que van en su curso normal) */}
-              {pasoActual >= 0 && (
+            <View style={[estilos.pillEstado, { backgroundColor: info.fondo }]}>
+              <Text style={[estilos.pillEstadoTexto, { color: info.texto }]}>{ETIQUETA_ESTADO[item.estado] || item.estado}</Text>
+            </View>
+
+            {/* Vista previa del primer producto, visible siempre (sin tener que expandir) */}
+            <View style={estilos.previaProducto}>
+              {urlMiniatura ? (
+                <Image source={{ uri: urlMiniatura }} style={estilos.miniatura} resizeMode="cover" />
+              ) : (
+                <View style={[estilos.miniatura, estilos.miniaturaVacia]}>
+                  <Ionicons name="musical-note-outline" size={16} color={Colores.textoClaro} />
+                </View>
+              )}
+              <Text style={estilos.nombrePrimerProducto} numberOfLines={1}>
+                {primerProducto ? primerProducto.nombre : `Producto #${primerDetalle?.producto}`}
+                {articulosExtra > 0 && <Text style={estilos.masArticulos}>  +{articulosExtra} más</Text>}
+              </Text>
+              <Text style={estilos.metodoPagoChico}>
+                <Ionicons name={item.metodo_pago === 'tarjeta' ? 'card-outline' : 'business-outline'} size={12} color={Colores.textoClaro} />
+                {'  '}{ETIQUETA_METODO[item.metodo_pago] || item.metodo_pago}
+              </Text>
+            </View>
+
+            {/* Línea de progreso con etiquetas (solo para pedidos que van en su curso normal) */}
+            {pasoActual >= 0 && (
+              <View style={estilos.progresoContenedor}>
                 <View style={estilos.progresoFila}>
                   {PASOS_FLUJO.map((paso, i) => (
-                    <React.Fragment key={paso}>
-                      <View style={[estilos.progresoPunto, i <= pasoActual && { backgroundColor: info.borde }]} />
+                    <React.Fragment key={paso.clave}>
+                      <View style={[estilos.progresoPunto, i <= pasoActual && { backgroundColor: info.borde, borderColor: info.borde }]} />
                       {i < PASOS_FLUJO.length - 1 && (
                         <View style={[estilos.progresoLinea, i < pasoActual && { backgroundColor: info.borde }]} />
                       )}
                     </React.Fragment>
                   ))}
                 </View>
-              )}
-
-              <Text style={estilos.metodoPago}>
-                <Ionicons name={item.metodo_pago === 'tarjeta' ? 'card-outline' : 'business-outline'} size={12} color={Colores.textoClaro} />
-                {'  '}{ETIQUETA_METODO[item.metodo_pago] || item.metodo_pago}
-              </Text>
-
-              {item.estado === 'pendiente_pago' && item.metodo_pago === 'deposito' && (
-                <View style={estilos.avisoBox}>
-                  <Ionicons name="information-circle" size={14} color="#92400e" />
-                  <Text style={estilos.avisoDeposito}>Esperando que confirmemos tu depósito.</Text>
-                </View>
-              )}
-              {item.estado === 'cancelado' && !!item.motivo_cancelacion && (
-                <View style={estilos.avisoBoxCancelado}>
-                  <Ionicons name="alert-circle" size={14} color="#b91c1c" />
-                  <Text style={estilos.motivoCancelacion}>{item.motivo_cancelacion}</Text>
-                </View>
-              )}
-
-              <View style={estilos.filaTotal}>
-                <Text style={estilos.total}>${parseFloat(item.total).toFixed(2)}</Text>
-                <View style={estilos.verDetalleFila}>
-                  <Text style={estilos.verDetalleTexto}>{abierto ? 'Ocultar' : 'Ver detalle'}</Text>
-                  <Ionicons name={abierto ? 'chevron-up' : 'chevron-down'} size={16} color={Colores.primario} />
+                <View style={estilos.progresoEtiquetasFila}>
+                  {PASOS_FLUJO.map((paso, i) => (
+                    <Text
+                      key={paso.clave}
+                      style={[estilos.progresoEtiqueta, i <= pasoActual && { color: info.texto, fontWeight: '700' }]}
+                    >
+                      {paso.etiqueta}
+                    </Text>
+                  ))}
                 </View>
               </View>
+            )}
 
-              {item.estado === 'pendiente_pago' && item.metodo_pago === 'tarjeta' && (
+            {item.estado === 'pendiente_pago' && item.metodo_pago === 'deposito' && (
+              <View style={estilos.avisoBox}>
+                <Ionicons name="information-circle" size={14} color="#92400e" />
+                <Text style={estilos.avisoDeposito}>Esperando que confirmemos tu depósito.</Text>
+              </View>
+            )}
+            {item.estado === 'cancelado' && !!item.motivo_cancelacion && (
+              <View style={estilos.avisoBoxCancelado}>
+                <Ionicons name="alert-circle" size={14} color="#b91c1c" />
+                <Text style={estilos.motivoCancelacion}>{item.motivo_cancelacion}</Text>
+              </View>
+            )}
+
+            <Pressable onPress={() => setExpandido(abierto ? null : item.id)} style={estilos.verDetalleFila}>
+              <Text style={estilos.verDetalleTexto}>{abierto ? 'Ocultar detalle' : 'Ver detalle del pedido'}</Text>
+              <Ionicons name={abierto ? 'chevron-up' : 'chevron-down'} size={16} color={Colores.primario} />
+            </Pressable>
+
+            {item.estado === 'pendiente_pago' && item.metodo_pago === 'tarjeta' && (
+              <Boton
+                titulo="Pagar ahora"
+                onPress={() => router.push(`/pagar-tarjeta?pedido_id=${item.id}`)}
+              />
+            )}
+
+            {item.estado === 'enviado' && (
+              <Boton
+                titulo="Ya recibí mi pedido"
+                onPress={() => confirmarRecepcion(item)}
+                cargando={confirmandoId === item.id}
+                icono={confirmandoId !== item.id ? <Ionicons name="checkmark-circle-outline" size={17} color={Colores.blanco} /> : null}
+              />
+            )}
+
+            {item.estado !== 'entregado' && item.estado !== 'cancelado' && (
+              <View style={{ marginTop: Espaciado.xs }}>
                 <Boton
-                  titulo="Pagar ahora"
-                  onPress={() => router.push(`/pagar-tarjeta?pedido_id=${item.id}`)}
+                  titulo="Cancelar pedido"
+                  variante="secundario"
+                  onPress={() => setPedidoACancelar(item)}
                 />
-              )}
+              </View>
+            )}
 
-              {item.estado === 'enviado' && (
-                <Boton
-                  titulo="Ya recibí mi pedido"
-                  onPress={() => confirmarRecepcion(item)}
-                  cargando={confirmandoId === item.id}
-                  icono={confirmandoId !== item.id ? <Ionicons name="checkmark-circle-outline" size={17} color={Colores.blanco} /> : null}
-                />
-              )}
-
-              {item.estado !== 'entregado' && item.estado !== 'cancelado' && (
-                <View style={{ marginTop: Espaciado.xs }}>
-                  <Boton
-                    titulo="Cancelar pedido"
-                    variante="secundario"
-                    onPress={() => setPedidoACancelar(item)}
-                  />
-                </View>
-              )}
-
-              {abierto && (
-                <View style={estilos.detalles}>
-                  {item.detalles.map((d) => {
-                    const producto = productosPorId[d.producto]
-                    const urlImg = producto ? imagenPrincipal(producto, baseUrl) : null
-                    return (
-                      <View key={d.id} style={estilos.filaDetalle}>
-                        {urlImg ? (
-                          <Image source={{ uri: urlImg }} style={estilos.miniaturaChica} resizeMode="cover" />
-                        ) : (
-                          <View style={[estilos.miniaturaChica, estilos.miniaturaVacia]}>
-                            <Ionicons name="musical-note-outline" size={13} color={Colores.textoClaro} />
-                          </View>
-                        )}
-                        <Text style={estilos.detalleNombre} numberOfLines={1}>
-                          {producto ? producto.nombre : `Producto #${d.producto}`} · x{d.cantidad}
-                        </Text>
-                        <Text style={estilos.detalleTexto}>${parseFloat(d.subtotal).toFixed(2)}</Text>
-                      </View>
-                    )
-                  })}
-                </View>
-              )}
-            </View>
+            {abierto && (
+              <View style={estilos.detalles}>
+                {item.detalles.map((d) => {
+                  const producto = productosPorId[d.producto]
+                  const urlImg = producto ? imagenPrincipal(producto, baseUrl) : null
+                  return (
+                    <View key={d.id} style={estilos.filaDetalle}>
+                      {urlImg ? (
+                        <Image source={{ uri: urlImg }} style={estilos.miniaturaChica} resizeMode="cover" />
+                      ) : (
+                        <View style={[estilos.miniaturaChica, estilos.miniaturaVacia]}>
+                          <Ionicons name="musical-note-outline" size={13} color={Colores.textoClaro} />
+                        </View>
+                      )}
+                      <Text style={estilos.detalleNombre} numberOfLines={1}>
+                        {producto ? producto.nombre : `Producto #${d.producto}`} · x{d.cantidad}
+                      </Text>
+                      <Text style={estilos.detalleTexto}>${parseFloat(d.subtotal).toFixed(2)}</Text>
+                    </View>
+                  )
+                })}
+              </View>
+            )}
           </Pressable>
         )
       }}
@@ -277,49 +293,47 @@ const estilos = StyleSheet.create({
   tituloVacio: { fontSize: 16, fontWeight: '700', color: Colores.textoOscuro, marginTop: 4 },
   textoVacio: { fontSize: 13.5, color: Colores.textoClaro, textAlign: 'center' },
   lista: { padding: Espaciado.md, gap: Espaciado.lg },
-  tarjetaContenedor: {
-    flexDirection: 'row',
-    backgroundColor: Colores.blanco,
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-  },
-  franjaEstado: { width: 6 },
   tarjeta: {
-    flex: 1,
     backgroundColor: Colores.blanco,
+    borderRadius: 22,
     padding: Espaciado.lg,
     gap: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.07,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
-  encabezadoTarjeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  encabezadoIzquierda: { gap: 2 },
+  filaSuperior: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  avatarEstado: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  infoSuperior: { flex: 1, gap: 2 },
   numeroPedido: { fontSize: 15.5, fontWeight: '700', color: Colores.textoOscuro },
   fecha: { fontSize: 12, color: Colores.textoClaro },
-  badge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: RadioBorde.pill, paddingHorizontal: 11, paddingVertical: 5 },
-  badgeTexto: { fontSize: 11, fontWeight: '700' },
+  totalBloque: { alignItems: 'flex-end' },
+  totalEtiqueta: { fontSize: 10.5, fontWeight: '600', color: Colores.textoClaro, textTransform: 'uppercase', letterSpacing: 0.4 },
+  total: { fontSize: 21, fontWeight: '800', color: Colores.textoOscuro },
+  pillEstado: { alignSelf: 'flex-start', borderRadius: RadioBorde.pill, paddingHorizontal: 12, paddingVertical: 5 },
+  pillEstadoTexto: { fontSize: 11.5, fontWeight: '700' },
   previaProducto: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colores.fondoApp, borderRadius: 14, padding: 10 },
   miniatura: { width: 38, height: 38, borderRadius: 10, backgroundColor: Colores.blanco },
   miniaturaChica: { width: 28, height: 28, borderRadius: 6, backgroundColor: Colores.blanco },
   miniaturaVacia: { alignItems: 'center', justifyContent: 'center' },
   nombrePrimerProducto: { flex: 1, fontSize: 12.5, fontWeight: '600', color: Colores.textoOscuro },
   masArticulos: { fontSize: 11.5, fontWeight: '500', color: Colores.textoClaro },
-  progresoFila: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, marginVertical: 4 },
-  progresoPunto: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colores.bordeGris },
+  metodoPagoChico: { fontSize: 11, color: Colores.textoClaro },
+  progresoContenedor: { gap: 6, marginVertical: 2 },
+  progresoFila: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },
+  progresoPunto: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colores.blanco, borderWidth: 2, borderColor: Colores.bordeGris },
   progresoLinea: { flex: 1, height: 2, backgroundColor: Colores.bordeGris },
-  metodoPago: { fontSize: 12, color: Colores.textoClaro },
+  progresoEtiquetasFila: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 2 },
+  progresoEtiqueta: { fontSize: 10.5, color: Colores.textoClaro },
   avisoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: Colores.naranjaFondo, borderRadius: 12, padding: 10 },
   avisoDeposito: { flex: 1, fontSize: 12, color: '#92400e', lineHeight: 16 },
   avisoBoxCancelado: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: Colores.rojoFondo, borderRadius: 12, padding: 10 },
   motivoCancelacion: { flex: 1, fontSize: 12, color: '#b91c1c', lineHeight: 16 },
-  filaTotal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  total: { fontSize: 20, fontWeight: '800', color: Colores.textoOscuro },
-  verDetalleFila: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  verDetalleFila: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 2 },
   verDetalleTexto: { fontSize: 12.5, fontWeight: '700', color: Colores.primario },
-  detalles: { marginTop: 4, paddingTop: Espaciado.sm, borderTopWidth: 1, borderTopColor: Colores.bordeGris, gap: 10 },
+  detalles: { marginTop: 2, paddingTop: Espaciado.sm, borderTopWidth: 1, borderTopColor: Colores.bordeGris, gap: 10 },
   filaDetalle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   detalleNombre: { flex: 1, fontSize: 12.5, color: Colores.textoMedio },
   detalleTexto: { fontSize: 12.5, fontWeight: '600', color: Colores.textoOscuro },
