@@ -1,7 +1,7 @@
 const BASE_URL_KEY = 'tienda_admin_base_url'
 
 export function getBaseUrl() {
-  return localStorage.getItem(BASE_URL_KEY) || 'http://192.168.1.64:8000'
+  return localStorage.getItem(BASE_URL_KEY) || 'https://tienda-api-django.onrender.com'
 }
 
 export function setBaseUrl(url) {
