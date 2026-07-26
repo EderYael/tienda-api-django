@@ -24,11 +24,16 @@ export default function Inicio() {
 
   const [resultadoIA, setResultadoIA] = useState(null)
   const [cargandoIA, setCargandoIA] = useState(false)
+  const [calificacionesPorProducto, setCalificacionesPorProducto] = useState({})
 
   // Si se llega desde la pestaña Categorías con ?categoria=<id>, preseleccionarla
+  // Y MUY IMPORTANTE: si venía de una búsqueda con IA, hay que salir de ese
+  // modo — si no, esta pantalla se queda mostrando los resultados viejos de
+  // la IA en vez del catálogo filtrado por la categoría que se acaba de elegir.
   useEffect(() => {
     if (params.categoria !== undefined) {
       setCategoriaActiva(params.categoria ? parseInt(params.categoria, 10) : null)
+      setResultadoIA(null)
     }
   }, [params.categoria])
 
@@ -39,12 +44,29 @@ export default function Inicio() {
       setBaseUrlState(url)
 
       const query = busqueda.trim() ? `?search=${encodeURIComponent(busqueda.trim())}` : ''
-      const [prods, cats] = await Promise.all([
+      const [prods, cats, resenas] = await Promise.all([
         api(`/api/productos/${query}`),
         api('/api/categorias/'),
+        api('/api/resenas/'),
       ])
       setProductos(prods)
       setCategorias(cats)
+
+      // Promedio y total de reseñas por producto, para mostrar las
+      // estrellas directo en la tarjeta del catálogo (como cualquier
+      // tienda en línea real) sin tener que entrar a cada producto.
+      const porProducto = {}
+      resenas.forEach((r) => {
+        if (!porProducto[r.producto]) porProducto[r.producto] = { suma: 0, total: 0 }
+        porProducto[r.producto].suma += r.calificacion
+        porProducto[r.producto].total += 1
+      })
+      const promedios = {}
+      Object.entries(porProducto).forEach(([id, d]) => {
+        promedios[id] = { promedio: d.suma / d.total, total: d.total }
+      })
+      setCalificacionesPorProducto(promedios)
+
       setError(null)
     } catch (err) {
       setError(err)
@@ -187,6 +209,8 @@ export default function Inicio() {
                 producto={item}
                 urlImagen={imagenPrincipal(item, baseUrl)}
                 onPress={() => router.push(`/producto/${item.id}`)}
+                calificacionPromedio={calificacionesPorProducto[item.id]?.promedio}
+                totalResenas={calificacionesPorProducto[item.id]?.total}
               />
             </View>
           )}
@@ -213,6 +237,8 @@ export default function Inicio() {
                 producto={item}
                 urlImagen={imagenPrincipal(item, baseUrl)}
                 onPress={() => router.push(`/producto/${item.id}`)}
+                calificacionPromedio={calificacionesPorProducto[item.id]?.promedio}
+                totalResenas={calificacionesPorProducto[item.id]?.total}
               />
             </View>
           )}

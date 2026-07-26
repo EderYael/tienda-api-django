@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import CampoTexto from '../components/CampoTexto.jsx'
 import Boton from '../components/Boton.jsx'
 import { Colores, Espaciado } from '../constants/theme.js'
+import { LOGO_BASE64 } from '../utils/logoBase64.js'
 
 const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 // Al menos 8 caracteres, al menos una letra y al menos un número — para que
@@ -57,7 +58,7 @@ export default function Registro() {
     <KeyboardAvoidingView style={estilos.pantalla} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={estilos.contenido} keyboardShouldPersistTaps="handled">
         <View style={estilos.logoWrap}>
-          <Image source={require('../assets/images/splash-icon.png')} style={estilos.logo} resizeMode="contain" />
+          <Image source={{ uri: LOGO_BASE64 }} style={estilos.logo} resizeMode="contain" />
         </View>
         <Text style={estilos.subtitulo}>Crea tu cuenta para comprar y dejar reseñas</Text>
 

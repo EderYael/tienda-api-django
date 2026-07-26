@@ -1,19 +1,20 @@
 import React, { useEffect, useState } from 'react'
-import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
+import { View, Text, Image, FlatList, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
-import { api } from '../utils/api.js'
+import { api, getBaseUrl } from '../utils/api.js'
+import { imagenPrincipal } from '../utils/imagenes.js'
 import { useToast } from '../context/ToastContext.jsx'
 import Boton from '../components/Boton.jsx'
 import ModalTexto from '../components/ModalTexto.jsx'
 import { Colores, Espaciado, RadioBorde } from '../constants/theme.js'
 
-const COLOR_ESTADO = {
-  pendiente_pago: { fondo: Colores.naranjaFondo, texto: '#92400e' },
-  pagado: { fondo: Colores.primarioClaro, texto: Colores.primarioOscuro },
-  enviado: { fondo: Colores.verdeFondo, texto: '#047857' },
-  entregado: { fondo: Colores.verdeFondo, texto: '#047857' },
-  cancelado: { fondo: Colores.rojoFondo, texto: '#b91c1c' },
+const INFO_ESTADO = {
+  pendiente_pago: { fondo: Colores.naranjaFondo, texto: '#92400e', borde: '#f59e0b', icono: 'time-outline' },
+  pagado: { fondo: Colores.primarioClaro, texto: Colores.primarioOscuro, borde: Colores.primario, icono: 'card-outline' },
+  enviado: { fondo: Colores.verdeFondo, texto: '#047857', borde: '#10b981', icono: 'airplane-outline' },
+  entregado: { fondo: Colores.verdeFondo, texto: '#047857', borde: '#10b981', icono: 'checkmark-done-circle-outline' },
+  cancelado: { fondo: Colores.rojoFondo, texto: '#b91c1c', borde: Colores.rojoError, icono: 'close-circle-outline' },
 }
 
 const ETIQUETA_ESTADO = {
@@ -29,21 +30,34 @@ const ETIQUETA_METODO = {
   tarjeta: 'Tarjeta',
 }
 
+// Pasos del flujo normal (un pedido cancelado no sigue esta línea).
+const PASOS_FLUJO = ['pagado', 'enviado', 'entregado']
+
 export default function Pedidos() {
   const router = useRouter()
   const { showToast } = useToast()
   const [pedidos, setPedidos] = useState([])
+  const [productosPorId, setProductosPorId] = useState({})
+  const [baseUrl, setBaseUrlState] = useState('')
   const [expandido, setExpandido] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [refrescando, setRefrescando] = useState(false)
   const [error, setError] = useState('')
   const [pedidoACancelar, setPedidoACancelar] = useState(null)
   const [cancelando, setCancelando] = useState(false)
+  const [confirmandoId, setConfirmandoId] = useState(null)
 
   function cargar({ mostrarSpinnerGrande = true } = {}) {
     if (mostrarSpinnerGrande) setCargando(true)
-    api('/api/pedidos/')
-      .then((data) => { setPedidos(data); setError('') })
+    getBaseUrl().then(setBaseUrlState)
+    Promise.all([api('/api/pedidos/'), api('/api/productos/')])
+      .then(([datosPedidos, productos]) => {
+        setPedidos(datosPedidos)
+        const mapa = {}
+        productos.forEach((p) => { mapa[p.id] = p })
+        setProductosPorId(mapa)
+        setError('')
+      })
       .catch((err) => setError(err.message))
       .finally(() => { setCargando(false); setRefrescando(false) })
   }
@@ -69,6 +83,19 @@ export default function Pedidos() {
     }
   }
 
+  async function confirmarRecepcion(pedido) {
+    setConfirmandoId(pedido.id)
+    try {
+      await api(`/api/pedidos/${pedido.id}/confirmar-recepcion/`, { method: 'POST' })
+      showToast('¡Gracias por confirmar! Esperamos que disfrutes tu compra.', 'success')
+      cargar({ mostrarSpinnerGrande: false })
+    } catch (err) {
+      showToast(err.message, 'error')
+    } finally {
+      setConfirmandoId(null)
+    }
+  }
+
   if (cargando) {
     return <View style={estilos.centrado}><ActivityIndicator size="large" color={Colores.primario} /></View>
   }
@@ -89,44 +116,104 @@ export default function Pedidos() {
       }
       ListEmptyComponent={
         <View style={estilos.centrado}>
-          <Ionicons name="receipt-outline" size={36} color={Colores.textoClaro} />
-          <Text style={estilos.textoVacio}>Todavía no tienes pedidos.</Text>
+          <Ionicons name="receipt-outline" size={48} color={Colores.textoClaro} />
+          <Text style={estilos.tituloVacio}>Todavía no tienes pedidos</Text>
+          <Text style={estilos.textoVacio}>Cuando compres algo, lo vas a poder seguir aquí.</Text>
         </View>
       }
       renderItem={({ item }) => {
-        const colores = COLOR_ESTADO[item.estado] || { fondo: Colores.fondoApp, texto: Colores.textoMedio }
+        const info = INFO_ESTADO[item.estado] || { fondo: Colores.fondoApp, texto: Colores.textoMedio, borde: Colores.bordeGris, icono: 'ellipse-outline' }
         const abierto = expandido === item.id
+        const primerDetalle = item.detalles[0]
+        const primerProducto = primerDetalle ? productosPorId[primerDetalle.producto] : null
+        const urlMiniatura = primerProducto ? imagenPrincipal(primerProducto, baseUrl) : null
+        const articulosExtra = item.detalles.length - 1
+        const pasoActual = PASOS_FLUJO.indexOf(item.estado)
+
         return (
-          <Pressable style={estilos.tarjeta} onPress={() => setExpandido(abierto ? null : item.id)}>
+          <Pressable
+            style={[estilos.tarjeta, { borderLeftColor: info.borde }]}
+            onPress={() => setExpandido(abierto ? null : item.id)}
+          >
             <View style={estilos.encabezadoTarjeta}>
-              <Text style={estilos.numeroPedido}>Pedido #{item.id}</Text>
-              <View style={[estilos.badge, { backgroundColor: colores.fondo }]}>
-                <Text style={[estilos.badgeTexto, { color: colores.texto }]}>
-                  {ETIQUETA_ESTADO[item.estado] || item.estado}
-                </Text>
+              <View style={estilos.encabezadoIzquierda}>
+                <Text style={estilos.numeroPedido}>Pedido #{item.id}</Text>
+                <Text style={estilos.fecha}>{new Date(item.fecha).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
+              </View>
+              <View style={[estilos.badge, { backgroundColor: info.fondo }]}>
+                <Ionicons name={info.icono} size={12} color={info.texto} />
+                <Text style={[estilos.badgeTexto, { color: info.texto }]}>{ETIQUETA_ESTADO[item.estado] || item.estado}</Text>
               </View>
             </View>
-            <Text style={estilos.fecha}>{new Date(item.fecha).toLocaleString('es-MX')}</Text>
+
+            {/* Vista previa del primer producto, visible siempre (sin tener que expandir) */}
+            <View style={estilos.previaProducto}>
+              {urlMiniatura ? (
+                <Image source={{ uri: urlMiniatura }} style={estilos.miniatura} resizeMode="cover" />
+              ) : (
+                <View style={[estilos.miniatura, estilos.miniaturaVacia]}>
+                  <Ionicons name="musical-note-outline" size={16} color={Colores.textoClaro} />
+                </View>
+              )}
+              <Text style={estilos.nombrePrimerProducto} numberOfLines={1}>
+                {primerProducto ? primerProducto.nombre : `Producto #${primerDetalle?.producto}`}
+                {articulosExtra > 0 && <Text style={estilos.masArticulos}>  +{articulosExtra} más</Text>}
+              </Text>
+            </View>
+
+            {/* Línea de progreso (solo para pedidos que van en su curso normal) */}
+            {pasoActual >= 0 && (
+              <View style={estilos.progresoFila}>
+                {PASOS_FLUJO.map((paso, i) => (
+                  <React.Fragment key={paso}>
+                    <View style={[estilos.progresoPunto, i <= pasoActual && { backgroundColor: info.borde }]} />
+                    {i < PASOS_FLUJO.length - 1 && (
+                      <View style={[estilos.progresoLinea, i < pasoActual && { backgroundColor: info.borde }]} />
+                    )}
+                  </React.Fragment>
+                ))}
+              </View>
+            )}
+
             <Text style={estilos.metodoPago}>
-              {ETIQUETA_METODO[item.metodo_pago] || item.metodo_pago}
+              <Ionicons name={item.metodo_pago === 'tarjeta' ? 'card-outline' : 'business-outline'} size={12} color={Colores.textoClaro} />
+              {'  '}{ETIQUETA_METODO[item.metodo_pago] || item.metodo_pago}
             </Text>
 
             {item.estado === 'pendiente_pago' && item.metodo_pago === 'deposito' && (
-              <Text style={estilos.avisoDeposito}>Esperando que confirmemos tu depósito.</Text>
+              <View style={estilos.avisoBox}>
+                <Ionicons name="information-circle" size={14} color="#92400e" />
+                <Text style={estilos.avisoDeposito}>Esperando que confirmemos tu depósito.</Text>
+              </View>
             )}
             {item.estado === 'cancelado' && !!item.motivo_cancelacion && (
-              <Text style={estilos.motivoCancelacion}>Motivo: {item.motivo_cancelacion}</Text>
+              <View style={estilos.avisoBoxCancelado}>
+                <Ionicons name="alert-circle" size={14} color="#b91c1c" />
+                <Text style={estilos.motivoCancelacion}>{item.motivo_cancelacion}</Text>
+              </View>
             )}
 
             <View style={estilos.filaTotal}>
               <Text style={estilos.total}>${parseFloat(item.total).toFixed(2)}</Text>
-              <Ionicons name={abierto ? 'chevron-up' : 'chevron-down'} size={18} color={Colores.textoClaro} />
+              <View style={estilos.verDetalleFila}>
+                <Text style={estilos.verDetalleTexto}>{abierto ? 'Ocultar' : 'Ver detalle'}</Text>
+                <Ionicons name={abierto ? 'chevron-up' : 'chevron-down'} size={16} color={Colores.primario} />
+              </View>
             </View>
 
             {item.estado === 'pendiente_pago' && item.metodo_pago === 'tarjeta' && (
               <Boton
                 titulo="Pagar ahora"
                 onPress={() => router.push(`/pagar-tarjeta?pedido_id=${item.id}`)}
+              />
+            )}
+
+            {item.estado === 'enviado' && (
+              <Boton
+                titulo="Ya recibí mi pedido"
+                onPress={() => confirmarRecepcion(item)}
+                cargando={confirmandoId === item.id}
+                icono={confirmandoId !== item.id ? <Ionicons name="checkmark-circle-outline" size={17} color={Colores.blanco} /> : null}
               />
             )}
 
@@ -142,12 +229,25 @@ export default function Pedidos() {
 
             {abierto && (
               <View style={estilos.detalles}>
-                {item.detalles.map((d) => (
-                  <View key={d.id} style={estilos.filaDetalle}>
-                    <Text style={estilos.detalleTexto}>Producto #{d.producto} · x{d.cantidad}</Text>
-                    <Text style={estilos.detalleTexto}>${parseFloat(d.subtotal).toFixed(2)}</Text>
-                  </View>
-                ))}
+                {item.detalles.map((d) => {
+                  const producto = productosPorId[d.producto]
+                  const urlImg = producto ? imagenPrincipal(producto, baseUrl) : null
+                  return (
+                    <View key={d.id} style={estilos.filaDetalle}>
+                      {urlImg ? (
+                        <Image source={{ uri: urlImg }} style={estilos.miniaturaChica} resizeMode="cover" />
+                      ) : (
+                        <View style={[estilos.miniaturaChica, estilos.miniaturaVacia]}>
+                          <Ionicons name="musical-note-outline" size={13} color={Colores.textoClaro} />
+                        </View>
+                      )}
+                      <Text style={estilos.detalleNombre} numberOfLines={1}>
+                        {producto ? producto.nombre : `Producto #${d.producto}`} · x{d.cantidad}
+                      </Text>
+                      <Text style={estilos.detalleTexto}>${parseFloat(d.subtotal).toFixed(2)}</Text>
+                    </View>
+                  )
+                })}
               </View>
             )}
           </Pressable>
@@ -170,24 +270,41 @@ export default function Pedidos() {
 
 const estilos = StyleSheet.create({
   pantalla: { flex: 1, backgroundColor: Colores.fondoApp },
-  centrado: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Espaciado.sm, backgroundColor: Colores.fondoApp, padding: Espaciado.lg },
+  centrado: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Espaciado.sm, backgroundColor: Colores.fondoApp, padding: Espaciado.xl },
+  tituloVacio: { fontSize: 16, fontWeight: '700', color: Colores.textoOscuro, marginTop: 4 },
   textoVacio: { fontSize: 13.5, color: Colores.textoClaro, textAlign: 'center' },
   lista: { padding: Espaciado.md, gap: Espaciado.sm },
   tarjeta: {
     backgroundColor: Colores.blanco, borderRadius: RadioBorde.tarjeta, padding: Espaciado.md,
-    borderWidth: 1, borderColor: Colores.bordeGris, gap: 4,
+    borderWidth: 1, borderColor: Colores.bordeGris, borderLeftWidth: 4, gap: 8,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1,
   },
-  encabezadoTarjeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  encabezadoTarjeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  encabezadoIzquierda: { gap: 1 },
   numeroPedido: { fontSize: 15, fontWeight: '700', color: Colores.textoOscuro },
-  badge: { borderRadius: RadioBorde.pill, paddingHorizontal: 10, paddingVertical: 3 },
-  badgeTexto: { fontSize: 11.5, fontWeight: '700' },
-  fecha: { fontSize: 12.5, color: Colores.textoClaro },
-  metodoPago: { fontSize: 12.5, color: Colores.textoMedio },
-  avisoDeposito: { fontSize: 12, color: '#92400e', fontStyle: 'italic' },
-  motivoCancelacion: { fontSize: 12.5, color: '#b91c1c' },
-  filaTotal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
-  total: { fontSize: 17, fontWeight: '800', color: Colores.primario },
-  detalles: { marginTop: Espaciado.sm, paddingTop: Espaciado.sm, borderTopWidth: 1, borderTopColor: Colores.bordeGris, gap: 4 },
-  filaDetalle: { flexDirection: 'row', justifyContent: 'space-between' },
-  detalleTexto: { fontSize: 12.5, color: Colores.textoMedio },
+  fecha: { fontSize: 12, color: Colores.textoClaro },
+  badge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: RadioBorde.pill, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeTexto: { fontSize: 11, fontWeight: '700' },
+  previaProducto: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colores.fondoApp, borderRadius: RadioBorde.boton, padding: 6 },
+  miniatura: { width: 34, height: 34, borderRadius: 8, backgroundColor: Colores.blanco },
+  miniaturaChica: { width: 28, height: 28, borderRadius: 6, backgroundColor: Colores.blanco },
+  miniaturaVacia: { alignItems: 'center', justifyContent: 'center' },
+  nombrePrimerProducto: { flex: 1, fontSize: 12.5, fontWeight: '600', color: Colores.textoOscuro },
+  masArticulos: { fontSize: 11.5, fontWeight: '500', color: Colores.textoClaro },
+  progresoFila: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, marginVertical: 2 },
+  progresoPunto: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colores.bordeGris },
+  progresoLinea: { flex: 1, height: 2, backgroundColor: Colores.bordeGris },
+  metodoPago: { fontSize: 12, color: Colores.textoClaro },
+  avisoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, backgroundColor: Colores.naranjaFondo, borderRadius: RadioBorde.boton, padding: 8 },
+  avisoDeposito: { flex: 1, fontSize: 12, color: '#92400e', lineHeight: 16 },
+  avisoBoxCancelado: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, backgroundColor: Colores.rojoFondo, borderRadius: RadioBorde.boton, padding: 8 },
+  motivoCancelacion: { flex: 1, fontSize: 12, color: '#b91c1c', lineHeight: 16 },
+  filaTotal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },
+  total: { fontSize: 19, fontWeight: '800', color: Colores.textoOscuro },
+  verDetalleFila: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  verDetalleTexto: { fontSize: 12.5, fontWeight: '700', color: Colores.primario },
+  detalles: { marginTop: 2, paddingTop: Espaciado.sm, borderTopWidth: 1, borderTopColor: Colores.bordeGris, gap: 8 },
+  filaDetalle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  detalleNombre: { flex: 1, fontSize: 12.5, color: Colores.textoMedio },
+  detalleTexto: { fontSize: 12.5, fontWeight: '600', color: Colores.textoOscuro },
 })

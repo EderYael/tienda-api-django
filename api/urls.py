@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import (
-    registro, mi_perfil,
+    registro, mi_perfil, cambiar_password,
     UsuarioAdminViewSet, CategoriaViewSet, ProductoViewSet, ImagenProductoViewSet,
     DireccionViewSet, PedidoViewSet, ResenaViewSet, PreguntaProductoViewSet,
     ver_carrito, agregar_al_carrito, actualizar_carrito,
@@ -22,6 +22,7 @@ router.register(r'preguntas', PreguntaProductoViewSet, basename='pregunta')
 urlpatterns = [
     path('registro/', registro),
     path('mi-perfil/', mi_perfil),
+    path('mi-perfil/cambiar-password/', cambiar_password),
 
     path('carrito/', ver_carrito),
     path('carrito/agregar/', agregar_al_carrito),

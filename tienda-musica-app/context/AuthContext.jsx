@@ -58,6 +58,12 @@ export function AuthProvider({ children }) {
     setUsuario(false)
   }
 
+  async function actualizarPerfil(cambios) {
+    const perfilActualizado = await api.api('/api/mi-perfil/', { method: 'PATCH', body: cambios })
+    setUsuario(perfilActualizado)
+    return perfilActualizado
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -69,6 +75,7 @@ export function AuthProvider({ children }) {
         iniciarSesion,
         crearCuenta,
         cerrarSesion,
+        actualizarPerfil,
       }}
     >
       {children}

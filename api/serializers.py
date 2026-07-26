@@ -213,10 +213,20 @@ class PagoTarjetaSerializer(serializers.Serializer):
 
 class ResenaSerializer(serializers.ModelSerializer):
     usuario = serializers.ReadOnlyField(source='usuario.username')
+    compra_verificada = serializers.SerializerMethodField()
 
     class Meta:
         model = Resena
-        fields = ['id', 'usuario', 'producto', 'calificacion', 'comentario', 'fecha']
+        fields = ['id', 'usuario', 'producto', 'calificacion', 'comentario', 'fecha', 'compra_verificada']
+
+    def get_compra_verificada(self, obj):
+        # Solo dice SÍ/NO (nunca detalles del pedido de nadie): revisa si
+        # quien escribió la reseña tiene al menos un pedido no cancelado
+        # que incluya este producto — el mismo sello de confianza que usan
+        # las tiendas grandes ("Compra verificada").
+        return Pedido.objects.filter(
+            usuario=obj.usuario, detalles__producto=obj.producto
+        ).exclude(estado='cancelado').exists()
 
     def create(self, validated_data):
         usuario = self.context['request'].user

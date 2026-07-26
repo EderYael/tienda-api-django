@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import CampoTexto from '../components/CampoTexto.jsx'
 import Boton from '../components/Boton.jsx'
 import { Colores, Espaciado } from '../constants/theme.js'
+import { LOGO_BASE64 } from '../utils/logoBase64.js'
 
 export default function Login() {
   const router = useRouter()
@@ -42,7 +43,7 @@ export default function Login() {
     >
       <ScrollView contentContainerStyle={estilos.contenido} keyboardShouldPersistTaps="handled">
         <View style={estilos.logoWrap}>
-          <Image source={require('../assets/images/splash-icon.png')} style={estilos.logo} resizeMode="contain" />
+          <Image source={{ uri: LOGO_BASE64 }} style={estilos.logo} resizeMode="contain" />
         </View>
         <Text style={estilos.titulo}>Tienda Música</Text>
         <Text style={estilos.subtitulo}>Ingresa tus datos para continuar</Text>

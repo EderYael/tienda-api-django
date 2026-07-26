@@ -31,6 +31,8 @@ export default function DetalleProducto() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [agregando, setAgregando] = useState(false)
+  const [cantidadElegida, setCantidadElegida] = useState(1)
+  const [indiceImagenActual, setIndiceImagenActual] = useState(0)
 
   const [mostrarFormResena, setMostrarFormResena] = useState(false)
   const [resenaEditandoId, setResenaEditandoId] = useState(null)
@@ -62,7 +64,7 @@ export default function DetalleProducto() {
     }).finally(() => setCargando(false))
   }
 
-  useEffect(() => { if (id) cargar() }, [id])
+  useEffect(() => { if (id) { cargar(); setCantidadElegida(1); setIndiceImagenActual(0) } }, [id])
 
   async function manejarAgregarCarrito() {
     if (!estaLogueado) {
@@ -72,8 +74,9 @@ export default function DetalleProducto() {
     }
     setAgregando(true)
     try {
-      await agregarAlCarrito(producto.id, 1)
-      showToast(`"${producto.nombre}" se agregó al carrito.`, 'success')
+      await agregarAlCarrito(producto.id, cantidadElegida)
+      showToast(`${cantidadElegida} × "${producto.nombre}" se agregó al carrito.`, 'success')
+      setCantidadElegida(1)
     } catch (err) {
       showToast(err.message, 'error')
     } finally {
@@ -231,16 +234,29 @@ export default function DetalleProducto() {
       <Stack.Screen options={{ title: producto.nombre }} />
       <ScrollView style={estilos.pantalla} contentContainerStyle={{ paddingBottom: Espaciado.xl }}>
         {imagenes.length > 0 ? (
-          <FlatList
-            data={imagenes}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            keyExtractor={(item, i) => String(i)}
-            renderItem={({ item }) => (
-              <Image source={{ uri: item }} style={estilos.imagenGaleria} resizeMode="cover" />
+          <>
+            <FlatList
+              data={imagenes}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(item, i) => String(i)}
+              onMomentumScrollEnd={(e) => {
+                const indice = Math.round(e.nativeEvent.contentOffset.x / ANCHO_PANTALLA)
+                setIndiceImagenActual(indice)
+              }}
+              renderItem={({ item }) => (
+                <Image source={{ uri: item }} style={estilos.imagenGaleria} resizeMode="cover" />
+              )}
+            />
+            {imagenes.length > 1 && (
+              <View style={estilos.puntosGaleria}>
+                {imagenes.map((_, i) => (
+                  <View key={i} style={[estilos.punto, i === indiceImagenActual && estilos.puntoActivo]} />
+                ))}
+              </View>
             )}
-          />
+          </>
         ) : (
           <View style={[estilos.imagenGaleria, estilos.imagenVacia]}>
             <Ionicons name="image-outline" size={48} color={Colores.textoClaro} />
@@ -266,6 +282,32 @@ export default function DetalleProducto() {
               {sinStock ? 'Agotado' : `${producto.stock} disponibles`}
             </Text>
           </View>
+          {!sinStock && producto.stock <= 5 && (
+            <Text style={estilos.avisoUrgencia}>¡Solo quedan {producto.stock}! Se está agotando.</Text>
+          )}
+
+          {!sinStock && (
+            <View style={estilos.selectorCantidadFila}>
+              <Text style={estilos.etiquetaCantidad}>Cantidad</Text>
+              <View style={estilos.controlCantidadGrande}>
+                <Pressable
+                  style={estilos.botonCantidadGrande}
+                  onPress={() => setCantidadElegida(Math.max(1, cantidadElegida - 1))}
+                  hitSlop={8}
+                >
+                  <Ionicons name="remove" size={17} color={Colores.textoOscuro} />
+                </Pressable>
+                <Text style={estilos.cantidadTextoGrande}>{cantidadElegida}</Text>
+                <Pressable
+                  style={estilos.botonCantidadGrande}
+                  onPress={() => setCantidadElegida(Math.min(producto.stock, cantidadElegida + 1))}
+                  hitSlop={8}
+                >
+                  <Ionicons name="add" size={17} color={Colores.textoOscuro} />
+                </Pressable>
+              </View>
+            </View>
+          )}
 
           {producto.descripcion ? (
             <>
@@ -284,6 +326,37 @@ export default function DetalleProducto() {
               </Pressable>
             )}
           </View>
+
+          {resenas.length > 0 && (
+            <View style={estilos.distribucionCard}>
+              <View style={estilos.distribucionResumen}>
+                <Text style={estilos.distribucionNumero}>{promedioResenas.toFixed(1)}</Text>
+                <View>
+                  <View style={{ flexDirection: 'row' }}>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Ionicons key={i} name={i < Math.round(promedioResenas) ? 'star' : 'star-outline'} size={13} color="#f59e0b" />
+                    ))}
+                  </View>
+                  <Text style={estilos.distribucionTotal}>{resenas.length} reseña{resenas.length !== 1 ? 's' : ''}</Text>
+                </View>
+              </View>
+              <View style={estilos.distribucionBarras}>
+                {[5, 4, 3, 2, 1].map((n) => {
+                  const cantidad = resenas.filter((r) => r.calificacion === n).length
+                  const porcentaje = resenas.length ? (cantidad / resenas.length) * 100 : 0
+                  return (
+                    <View key={n} style={estilos.filaDistribucion}>
+                      <Text style={estilos.distribucionEstrellaTexto}>{n}★</Text>
+                      <View style={estilos.barraFondo}>
+                        <View style={[estilos.barraLlena, { width: `${porcentaje}%` }]} />
+                      </View>
+                      <Text style={estilos.distribucionCantidad}>{cantidad}</Text>
+                    </View>
+                  )
+                })}
+              </View>
+            </View>
+          )}
 
           {mostrarFormResena && (
             <View style={estilos.formResena}>
@@ -329,6 +402,12 @@ export default function DetalleProducto() {
                       ))}
                     </View>
                   </View>
+                  {r.compra_verificada && (
+                    <View style={estilos.badgeVerificada}>
+                      <Ionicons name="checkmark-circle" size={12} color={Colores.verdeExito} />
+                      <Text style={estilos.badgeVerificadaTexto}>Compra verificada</Text>
+                    </View>
+                  )}
                   <Text style={estilos.resenaComentario}>{r.comentario}</Text>
                   {esMia && (
                     <View style={estilos.resenaAcciones}>
@@ -412,6 +491,11 @@ export default function DetalleProducto() {
       </ScrollView>
 
       <View style={estilos.barraInferior}>
+        {!sinStock && cantidadElegida > 1 && (
+          <Text style={estilos.subtotalBarra}>
+            Subtotal: ${(parseFloat(producto.precio) * cantidadElegida).toFixed(2)}
+          </Text>
+        )}
         <Boton
           titulo={sinStock ? 'Agotado' : 'Agregar al carrito'}
           onPress={manejarAgregarCarrito}
@@ -430,6 +514,19 @@ const estilos = StyleSheet.create({
   textoError: { fontSize: 13.5, color: Colores.textoMedio, textAlign: 'center', paddingHorizontal: Espaciado.lg },
   imagenGaleria: { width: ANCHO_PANTALLA, aspectRatio: 1, backgroundColor: Colores.fondoApp },
   imagenVacia: { alignItems: 'center', justifyContent: 'center' },
+  puntosGaleria: { flexDirection: 'row', justifyContent: 'center', gap: 5, marginTop: 10 },
+  punto: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colores.bordeGris },
+  puntoActivo: { backgroundColor: Colores.primario, width: 16 },
+  avisoUrgencia: { fontSize: 12.5, fontWeight: '700', color: '#c2410c', marginTop: 4 },
+  selectorCantidadFila: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Espaciado.sm },
+  etiquetaCantidad: { fontSize: 14, fontWeight: '600', color: Colores.textoMedio },
+  controlCantidadGrande: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colores.fondoApp,
+    borderRadius: RadioBorde.boton, padding: 5,
+  },
+  botonCantidadGrande: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: Colores.blanco, borderRadius: 9 },
+  cantidadTextoGrande: { minWidth: 28, textAlign: 'center', fontSize: 15, fontWeight: '700', color: Colores.textoOscuro },
+  subtotalBarra: { fontSize: 13, color: Colores.textoMedio, textAlign: 'center', marginBottom: 6 },
   contenido: { padding: Espaciado.lg, gap: 6 },
   categoria: { fontSize: 12.5, fontWeight: '700', color: Colores.primario, textTransform: 'uppercase', letterSpacing: 0.4 },
   nombre: { fontSize: 22, fontWeight: '800', color: Colores.textoOscuro },
@@ -448,6 +545,21 @@ const estilos = StyleSheet.create({
   filaSeccionResenas: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   enlaceEscribirResena: { color: Colores.primario, fontWeight: '700', fontSize: 13, marginTop: Espaciado.md },
   sinResenas: { fontSize: 13, color: Colores.textoClaro, marginTop: 4 },
+  distribucionCard: {
+    flexDirection: 'row', gap: Espaciado.md, backgroundColor: Colores.fondoApp,
+    borderRadius: RadioBorde.tarjeta, padding: Espaciado.md, marginTop: Espaciado.sm,
+  },
+  distribucionResumen: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  distribucionNumero: { fontSize: 28, fontWeight: '800', color: Colores.textoOscuro },
+  distribucionTotal: { fontSize: 11.5, color: Colores.textoClaro, marginTop: 2 },
+  distribucionBarras: { flex: 1, justifyContent: 'center', gap: 3 },
+  filaDistribucion: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  distribucionEstrellaTexto: { fontSize: 11, color: Colores.textoMedio, width: 20 },
+  barraFondo: { flex: 1, height: 5, borderRadius: 3, backgroundColor: Colores.bordeGris, overflow: 'hidden' },
+  barraLlena: { height: '100%', backgroundColor: '#f59e0b', borderRadius: 3 },
+  distribucionCantidad: { fontSize: 11, color: Colores.textoClaro, width: 16, textAlign: 'right' },
+  badgeVerificada: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  badgeVerificadaTexto: { fontSize: 11, fontWeight: '700', color: Colores.verdeExito },
   formResena: {
     backgroundColor: Colores.fondoApp, borderRadius: RadioBorde.tarjeta, padding: Espaciado.md,
     gap: Espaciado.sm, marginTop: Espaciado.sm,

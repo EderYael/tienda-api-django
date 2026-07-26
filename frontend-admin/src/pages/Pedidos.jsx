@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 import { useToast } from '../context/ToastContext.jsx'
 import Spinner from '../components/Spinner.jsx'
+import ModalMotivo from '../components/ModalMotivo.jsx'
 import { SkeletonFilas } from '../components/Skeleton.jsx'
 import { IconEye } from '../components/icons.jsx'
 
@@ -37,6 +38,7 @@ export default function Pedidos() {
   const [error, setError] = useState('')
   const [expandido, setExpandido] = useState(null)
   const [accionEnCurso, setAccionEnCurso] = useState(null)
+  const [pedidoACancelar, setPedidoACancelar] = useState(null)
 
   async function cargar() {
     setCargandoLista(true)
@@ -79,17 +81,16 @@ export default function Pedidos() {
     ejecutarAccion(pedido, 'marcar-entregado', `Pedido #${pedido.id} marcado como entregado.`)
   }
 
-  async function cancelarPedido(pedido) {
-    const motivo = window.prompt(`¿Por qué se cancela el pedido #${pedido.id}?`)
-    if (motivo === null) return // el admin le dio "Cancelar" al prompt, no seguimos
-    if (!motivo.trim()) {
-      showToast('Debes indicar un motivo para cancelar.', 'error')
-      return
-    }
-    setAccionEnCurso(pedido.id)
+  function cancelarPedido(pedido) {
+    setPedidoACancelar(pedido)
+  }
+
+  async function confirmarCancelacion(motivo) {
+    setAccionEnCurso(pedidoACancelar.id)
     try {
-      await api(`/api/pedidos/${pedido.id}/cancelar/`, { method: 'POST', body: { motivo: motivo.trim() } })
-      showToast(`Pedido #${pedido.id} cancelado.`, 'success')
+      await api(`/api/pedidos/${pedidoACancelar.id}/cancelar/`, { method: 'POST', body: { motivo } })
+      showToast(`Pedido #${pedidoACancelar.id} cancelado.`, 'success')
+      setPedidoACancelar(null)
       cargar()
     } catch (err) {
       showToast(err.message, 'error')
@@ -125,6 +126,7 @@ export default function Pedidos() {
           Marcar entregado
         </button>
       )
+      botones.push(<span key="nota-entrega" className="campo-ayuda">o el cliente lo confirma solo</span>)
     }
     if (pedido.estado !== 'entregado' && pedido.estado !== 'cancelado') {
       botones.push(
@@ -212,6 +214,17 @@ export default function Pedidos() {
           </tbody>
         </table>
       </div>
+
+      <ModalMotivo
+        abierto={!!pedidoACancelar}
+        titulo={pedidoACancelar ? `Cancelar pedido #${pedidoACancelar.id}` : ''}
+        etiqueta="Motivo de la cancelación"
+        placeholder="Ej. El cliente pidió cancelar, producto sin stock, error en el pedido..."
+        textoBoton="Cancelar pedido"
+        cargando={accionEnCurso === pedidoACancelar?.id}
+        onCancelar={() => setPedidoACancelar(null)}
+        onConfirmar={confirmarCancelacion}
+      />
     </div>
   )
 }

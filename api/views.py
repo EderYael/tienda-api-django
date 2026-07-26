@@ -10,6 +10,8 @@ from django.db import transaction
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import filters
 import re
 import os
@@ -26,7 +28,7 @@ from .serializers import (
     RegistroSerializer, PerfilSerializer, UsuarioAdminSerializer,
     CategoriaSerializer, ImagenProductoSerializer, ProductoSerializer,
     DireccionSerializer, PedidoSerializer, ResenaSerializer, PagoTarjetaSerializer,
-    PreguntaProductoSerializer
+    PreguntaProductoSerializer, _validar_fuerza_password
 )
 from .permissions import (
     EsAdministradorOSoloLectura, EsPropietarioOAdministrador,
@@ -46,11 +48,44 @@ def registro(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def mi_perfil(request):
+    if request.method == 'PATCH':
+        nuevo_email = request.data.get('email')
+        if nuevo_email is not None:
+            nuevo_email = nuevo_email.strip()
+            if not nuevo_email:
+                return Response({'error': 'El correo no puede quedar vacío.'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                validate_email(nuevo_email)
+            except DjangoValidationError:
+                return Response({'error': 'Ingresa un correo válido.'}, status=status.HTTP_400_BAD_REQUEST)
+            request.user.email = nuevo_email
+            request.user.save()
+
     serializer = PerfilSerializer(request.user.perfil)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cambiar_password(request):
+    """El propio usuario cambia su contraseña, confirmando la actual."""
+    password_actual = request.data.get('password_actual', '')
+    password_nueva = request.data.get('password_nueva', '')
+
+    if not request.user.check_password(password_actual):
+        return Response({'error': 'Tu contraseña actual no es correcta.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        _validar_fuerza_password(password_nueva, username=request.user.username, email=request.user.email)
+    except ValidationError as e:
+        return Response({'error': e.detail}, status=status.HTTP_400_BAD_REQUEST)
+
+    request.user.set_password(password_nueva)
+    request.user.save()
+    return Response({'mensaje': 'Contraseña actualizada correctamente.'}, status=status.HTTP_200_OK)
 
 
 # ---------- Gestión de usuarios (solo administrador, CRUD completo) ----------
@@ -370,6 +405,33 @@ class PedidoViewSet(viewsets.ModelViewSet):
         pedido.estado = 'entregado'
         pedido.save()
         return Response({'mensaje': 'Pedido marcado como entregado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='confirmar-recepcion')
+    def confirmar_recepcion(self, request, pk=None):
+        """
+        El propio cliente confirma que ya recibió su pedido (o un admin,
+        como respaldo manual). Hace lo mismo que marcar_entregado, pero
+        con permiso de dueño en vez de solo-administrador: así el cliente
+        no depende de que el admin se entere por su cuenta de que el
+        paquete ya llegó.
+
+        Límite real, sin resolver aquí (ningún sistema lo resuelve solo sin
+        integrar paquetería con rastreo real): un cliente podría marcar
+        "recibido" sin haberlo recibido de verdad, o al revés, decir que
+        nunca llegó habiéndolo recibido. Igual que en Amazon o Mercado
+        Libre, eso se atiende por fuera del sistema (contactando al
+        vendedor/soporte), no algo que el código por sí solo pueda
+        garantizar sin un servicio de paquetería con prueba de entrega.
+        """
+        pedido = self.get_object()
+        if pedido.estado != 'enviado':
+            return Response(
+                {'error': f'Este pedido está "{pedido.get_estado_display()}", no se puede confirmar recepción.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        pedido.estado = 'entregado'
+        pedido.save()
+        return Response({'mensaje': '¡Gracias por confirmar! Pedido marcado como entregado.', 'estado': pedido.estado}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='cancelar')
     def cancelar(self, request, pk=None):
@@ -716,7 +778,11 @@ def _construir_prompt_sistema(categorias):
         'específicas que el cliente no mencionó.\n'
         '- "categoria_sugerida": si una de las categorías reales de arriba '
         'encaja claramente, escríbela EXACTAMENTE igual a como aparece en la '
-        'lista; si ninguna encaja, deja este campo como cadena vacía.\n\n'
+        'lista; si ninguna encaja, deja este campo como cadena vacía.\n'
+        '- "requiere_resenas": true SOLO si el cliente pide explícitamente '
+        'productos que YA tengan reseñas/calificaciones/opiniones de otros '
+        'clientes (ej. "con reseñas", "que tengan buenas calificaciones", '
+        '"productos valorados"); en cualquier otro caso, false.\n\n'
         'Si la consulta no tiene relación alguna con una tienda de música, '
         'dilo amablemente en "mensaje" y deja "palabras_clave" vacío.'
     )
@@ -738,6 +804,7 @@ def _interpretar_consulta(consulta, categorias):
                     'mensaje': {'type': 'STRING'},
                     'palabras_clave': {'type': 'ARRAY', 'items': {'type': 'STRING'}},
                     'categoria_sugerida': {'type': 'STRING'},
+                    'requiere_resenas': {'type': 'BOOLEAN'},
                 },
                 'required': ['mensaje', 'palabras_clave'],
             },
@@ -915,6 +982,7 @@ def busqueda_inteligente(request):
     aviso = None
     categoria_sugerida = None
     mensaje = None
+    requiere_resenas = False
 
     clave_cache = _clave_cache_interpretacion(consulta)
     interpretacion_cacheada = cache.get(clave_cache)
@@ -931,9 +999,16 @@ def busqueda_inteligente(request):
             interpretacion = _interpretar_consulta(consulta, categorias)
             cache.set(clave_cache, interpretacion, TTL_CACHE_INTERPRETACION)
 
-        palabras_clave = [p for p in interpretacion.get('palabras_clave', []) if p] or _palabras_clave_de_respaldo(consulta)
+        # Ojo: si Gemini responde con éxito pero sin palabras clave (porque
+        # la consulta no nombra ningún producto/atributo, ej. "muéstrame
+        # productos con reseñas"), eso es válido y se respeta tal cual — NO
+        # se cae al respaldo de palabras sueltas del texto crudo. El
+        # respaldo es solo para cuando Gemini falló por completo (excepto
+        # abajo), donde no hay ninguna interpretación en la que confiar.
+        palabras_clave = [p for p in interpretacion.get('palabras_clave', []) if p]
         categoria_sugerida = interpretacion.get('categoria_sugerida') or None
         mensaje = interpretacion.get('mensaje') or None
+        requiere_resenas = bool(interpretacion.get('requiere_resenas'))
 
     except GeminiNoConfigurado:
         usando_ia = False
@@ -953,13 +1028,19 @@ def busqueda_inteligente(request):
         palabras_clave = _palabras_clave_de_respaldo(consulta)
 
     productos = _buscar_productos(palabras_clave, presupuesto_maximo)
+
+    if requiere_resenas:
+        productos = [p for p in productos if p.resenas.exists()]
+
     total = len(productos)
     serializer = ProductoSerializer(productos, many=True, context={'request': request})
 
     if not mensaje:
         # Respaldo sin IA (o la IA no mandó mensaje): texto genérico pero
         # que igual se siente como respuesta, no como un JSON pelón.
-        if total == 0 and presupuesto_maximo is not None:
+        if total == 0 and requiere_resenas:
+            mensaje = 'Ninguno de los productos que coinciden con tu búsqueda tiene reseñas todavía.'
+        elif total == 0 and presupuesto_maximo is not None:
             mensaje = (
                 f'No encontré productos por ${presupuesto_maximo:,.2f} o menos con esas palabras. '
                 '¿Ajustamos el presupuesto o la búsqueda?'
@@ -980,6 +1061,7 @@ def busqueda_inteligente(request):
         'palabras_clave_interpretadas': palabras_clave,
         'categoria_sugerida': categoria_sugerida,
         'presupuesto_detectado': presupuesto_maximo,
+        'requiere_resenas': requiere_resenas,
         'total_resultados': total,
         'productos': serializer.data,
     }, status=status.HTTP_200_OK)
