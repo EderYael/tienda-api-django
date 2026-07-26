@@ -35,7 +35,7 @@ class Producto(models.Model):
 
 class ImagenProducto(models.Model):
     producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name='imagenes')
-    imagen = models.ImageField(upload_to='productos/')
+    imagen = models.URLField(max_length=500)
     es_principal = models.BooleanField(default=False)
     orden = models.PositiveIntegerField(default=0)
 

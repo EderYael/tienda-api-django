@@ -27,8 +27,8 @@ export default function Productos() {
   const [form, setForm] = useState(VACIO)
   const [errores, setErrores] = useState({})
   const [imagenesExistentes, setImagenesExistentes] = useState([])
-  const [imagenesNuevas, setImagenesNuevas] = useState([]) // File[]
-  const [subiendoImagen, setSubiendoImagen] = useState(false)
+  const [nuevaUrlImagen, setNuevaUrlImagen] = useState('')
+  const [urlsNuevas, setUrlsNuevas] = useState([]) // string[]
   const [guardando, setGuardando] = useState(false)
 
   const [confirmando, setConfirmando] = useState(null)
@@ -61,7 +61,8 @@ export default function Productos() {
     setForm(VACIO)
     setErrores({})
     setImagenesExistentes([])
-    setImagenesNuevas([])
+    setUrlsNuevas([])
+    setNuevaUrlImagen('')
     setModalAbierto(true)
   }
 
@@ -76,7 +77,8 @@ export default function Productos() {
     })
     setErrores({})
     setImagenesExistentes(p.imagenes || [])
-    setImagenesNuevas([])
+    setUrlsNuevas([])
+    setNuevaUrlImagen('')
     setModalAbierto(true)
   }
 
@@ -85,12 +87,15 @@ export default function Productos() {
     if (errores[campo]) setErrores({ ...errores, [campo]: null })
   }
 
-  function agregarImagenesNuevas(archivos) {
-    setImagenesNuevas([...imagenesNuevas, ...Array.from(archivos)])
+  function agregarUrlImagen() {
+    const url = nuevaUrlImagen.trim()
+    if (!url) return
+    setUrlsNuevas([...urlsNuevas, url])
+    setNuevaUrlImagen('')
   }
 
-  function quitarImagenNueva(indice) {
-    setImagenesNuevas(imagenesNuevas.filter((_, i) => i !== indice))
+  function quitarUrlNueva(indice) {
+    setUrlsNuevas(urlsNuevas.filter((_, i) => i !== indice))
   }
 
   async function eliminarImagenExistente(imagen) {
@@ -138,20 +143,18 @@ export default function Productos() {
         productoGuardado = await api('/api/productos/', { method: 'POST', body })
       }
 
-      if (imagenesNuevas.length > 0) {
-        setSubiendoImagen(true)
+      if (urlsNuevas.length > 0) {
         const sinImagenesPrevias = imagenesExistentes.length === 0
-        for (let i = 0; i < imagenesNuevas.length; i++) {
-          const fd = new FormData()
-          fd.append('producto', productoGuardado.id)
-          fd.append('imagen', imagenesNuevas[i])
-          // La primera imagen que se sube a un producto sin fotos todavía
-          // se marca como principal automáticamente; el resto, no (el admin
-          // puede cambiarla después con "Marcar como principal").
-          fd.append('es_principal', sinImagenesPrevias && i === 0)
-          await api('/api/imagenes-producto/', { method: 'POST', body: fd, isFormData: true })
+        for (let i = 0; i < urlsNuevas.length; i++) {
+          await api('/api/imagenes-producto/', {
+            method: 'POST',
+            body: {
+              producto: productoGuardado.id,
+              imagen: urlsNuevas[i],
+              es_principal: sinImagenesPrevias && i === 0
+            }
+          })
         }
-        setSubiendoImagen(false)
       }
 
       showToast(`"${form.nombre}" se ${editando ? 'actualizó' : 'creó'} correctamente.`, 'success')
@@ -166,7 +169,6 @@ export default function Productos() {
       }
     } finally {
       setGuardando(false)
-      setSubiendoImagen(false)
     }
   }
 
@@ -310,7 +312,7 @@ export default function Productos() {
           </select>
           {errores.categoria && <span className="campo-error">{errores.categoria}</span>}
 
-          <label>Imágenes (puedes seleccionar varias a la vez, como en un marketplace)</label>
+          <label>Imágenes (pega la URL de cada imagen, ya alojada en internet)</label>
 
           {imagenesExistentes.length > 0 && (
             <div className="galeria-imagenes">
@@ -333,14 +335,14 @@ export default function Productos() {
             </div>
           )}
 
-          {imagenesNuevas.length > 0 && (
+          {urlsNuevas.length > 0 && (
             <div className="galeria-imagenes">
-              {imagenesNuevas.map((archivo, i) => (
+              {urlsNuevas.map((url, i) => (
                 <div key={i} className="galeria-item galeria-item-pendiente">
-                  <img src={URL.createObjectURL(archivo)} alt="" />
+                  <img src={url} alt="" />
                   <span className="galeria-badge-pendiente">Nueva</span>
                   <div className="galeria-acciones">
-                    <button type="button" title="Quitar" onClick={() => quitarImagenNueva(i)}>
+                    <button type="button" title="Quitar" onClick={() => quitarUrlNueva(i)}>
                       <IconTrash size={13} />
                     </button>
                   </div>
@@ -349,18 +351,27 @@ export default function Productos() {
             </div>
           )}
 
-          <input type="file" accept="image/*" multiple onChange={(e) => agregarImagenesNuevas(e.target.files)} />
+          <div className="fila-form">
+            <input
+              type="text"
+              placeholder="https://ejemplo.com/imagen.jpg"
+              value={nuevaUrlImagen}
+              onChange={(e) => setNuevaUrlImagen(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); agregarUrlImagen() } }}
+            />
+            <button type="button" className="btn btn-secundario" onClick={agregarUrlImagen}>Agregar</button>
+          </div>
           <span className="campo-ayuda">
-            {imagenesExistentes.length === 0 && imagenesNuevas.length === 0
-              ? 'La primera imagen que subas será la principal.'
-              : 'Las imágenes nuevas se agregan a la galería; usa la estrella para elegir cuál es la principal.'}
+            {imagenesExistentes.length === 0 && urlsNuevas.length === 0
+              ? 'La primera URL que agregues será la imagen principal.'
+              : 'Las URLs nuevas se agregan a la galería; usa la estrella para elegir cuál es la principal.'}
           </span>
 
           <div className="modal-acciones">
             <button type="button" className="btn btn-secundario" onClick={() => setModalAbierto(false)} disabled={guardando}>Cancelar</button>
             <button type="submit" className="btn btn-primario" disabled={guardando}>
               {guardando ? <Spinner size={14} /> : null}
-              {guardando ? (subiendoImagen ? 'Subiendo imágenes...' : 'Guardando...') : 'Guardar'}
+              {guardando ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
         </form>
