@@ -152,7 +152,7 @@ export default function Inicio() {
             contentContainerStyle={estilos.listaChips}
             renderItem={({ item }) => (
               <Pressable
-                onPress={() => setCategoriaActiva(item.id)}
+                onPress={() => { setCategoriaActiva(item.id); setResultadoIA(null) }}
                 style={[estilos.chip, categoriaActiva === item.id && estilos.chipActivo]}
               >
                 <Text style={[estilos.chipTexto, categoriaActiva === item.id && estilos.chipTextoActivo]}>
