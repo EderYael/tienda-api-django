@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native'
+import { View, Text, Image, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
@@ -8,6 +8,9 @@ import Boton from '../components/Boton.jsx'
 import { Colores, Espaciado } from '../constants/theme.js'
 
 const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+// Al menos 8 caracteres, al menos una letra y al menos un número — para que
+// "12345678" o "aaaaaaaa" ya no pasen, sin pedirle al usuario símbolos raros.
+const REGEX_PASSWORD_VALIDA = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/
 
 export default function Registro() {
   const router = useRouter()
@@ -25,7 +28,11 @@ export default function Registro() {
     if (!username.trim()) err.username = 'El usuario es obligatorio'
     if (!email.trim()) err.email = 'El correo es obligatorio'
     else if (!REGEX_EMAIL.test(email.trim())) err.email = 'Ingresa un correo válido'
-    if (!password || password.length < 8) err.password = 'Mínimo 8 caracteres'
+    if (!password) {
+      err.password = 'La contraseña es obligatoria'
+    } else if (!REGEX_PASSWORD_VALIDA.test(password)) {
+      err.password = 'Mínimo 8 caracteres, con al menos una letra y un número'
+    }
     return err
   }
 
@@ -49,6 +56,9 @@ export default function Registro() {
   return (
     <KeyboardAvoidingView style={estilos.pantalla} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={estilos.contenido} keyboardShouldPersistTaps="handled">
+        <View style={estilos.logoWrap}>
+          <Image source={require('../assets/images/splash-icon.png')} style={estilos.logo} resizeMode="contain" />
+        </View>
         <Text style={estilos.subtitulo}>Crea tu cuenta para comprar y dejar reseñas</Text>
 
         <CampoTexto
@@ -72,7 +82,7 @@ export default function Registro() {
           etiqueta="Contraseña"
           valor={password}
           onChangeText={(t) => { setPassword(t); setErrores({ ...errores, password: null }) }}
-          placeholder="Mínimo 8 caracteres"
+          placeholder="Mínimo 8 caracteres, letras y números"
           esPassword
           error={errores.password}
         />
@@ -95,7 +105,9 @@ export default function Registro() {
 const estilos = StyleSheet.create({
   pantalla: { flex: 1, backgroundColor: Colores.blanco },
   contenido: { padding: Espaciado.lg, gap: Espaciado.md },
-  subtitulo: { fontSize: 14, color: Colores.textoMedio, marginBottom: Espaciado.xs },
+  logoWrap: { alignItems: 'center', marginTop: Espaciado.md, marginBottom: Espaciado.xs },
+  logo: { width: 72, height: 72 },
+  subtitulo: { fontSize: 14, color: Colores.textoMedio, marginBottom: Espaciado.xs, textAlign: 'center' },
   error: { fontSize: 13, color: Colores.rojoError, fontWeight: '500' },
   pieTexto: { fontSize: 13.5, color: Colores.textoMedio, textAlign: 'center', marginTop: Espaciado.sm },
   enlace: { color: Colores.primario, fontWeight: '700' },

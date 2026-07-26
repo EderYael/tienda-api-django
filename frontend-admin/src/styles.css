@@ -1586,3 +1586,63 @@ input[type="file"]:hover {
 }
 .respuesta-inline textarea:focus { outline: none; border-color: var(--color-primario); }
 .respuesta-inline button { align-self: flex-start; }
+
+/* =========================================
+   RESPONSIVE: panel admin desde navegador de celular
+   (el panel se diseñó para escritorio; esto lo hace usable, no rediseña
+   cada pantalla — sigue siendo más cómodo en una pantalla grande)
+========================================= */
+@media (max-width: 768px) {
+  .app-shell {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    padding: 12px;
+    gap: 12px;
+    overflow: visible;
+  }
+
+  /* La barra lateral pasa de columna vertical fija a una franja horizontal
+     arriba, con los enlaces desplazables de lado a lado (como tabs). */
+  .sidebar {
+    width: 100%;
+    padding: 14px 16px;
+  }
+  .sidebar .marca { padding-bottom: 10px; font-size: 16px; }
+  .sidebar nav {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+  .sidebar a {
+    white-space: nowrap;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+  .sidebar .usuario-box {
+    margin-top: 12px;
+    padding-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .contenido { padding: 0; }
+  .topbar { flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+  .search-container { max-width: 100%; order: 2; }
+  .encabezado { flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 20px; }
+
+  /* Las tablas de este panel tienen muchas columnas (ID, cliente, fecha,
+     estado, acciones...) — en vez de aplastarlas hasta ser ilegibles, se
+     deja un scroll horizontal dentro de la tarjeta que las contiene. */
+  .tarjeta { overflow-x: auto; padding: 10px; }
+  table { min-width: 620px; }
+
+  /* Modales con ancho fijo (460px, 520px, etc.) se desbordarían en un
+     celular angosto; se limitan al ancho real de la pantalla. */
+  .modal { width: 92vw !important; max-width: 460px; padding: 20px; }
+
+  .fila-form { flex-direction: column; }
+  .filtros-ventas { flex-direction: column; align-items: stretch; }
+}

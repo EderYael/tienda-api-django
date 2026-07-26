@@ -9,9 +9,10 @@ import { IconPackage, IconShoppingCart, IconUsers, IconDollarSign, IconStar } fr
 import { SkeletonTarjetas } from '../components/Skeleton.jsx'
 
 const COLOR_ESTADO = {
-  pendiente: '#f59e0b',
+  pendiente_pago: '#f59e0b',
   pagado: '#2563eb',
   enviado: '#10b981',
+  entregado: '#059669',
   cancelado: '#ef4444'
 }
 
@@ -56,7 +57,7 @@ export default function Dashboard() {
       if (rResenas.status === 'rejected') fallos.push('reseñas')
       setError(fallos.length > 0 ? `No se pudo cargar: ${fallos.join(', ')}. El resto del panel muestra lo disponible.` : '')
 
-      const pendientes = pedidos.filter((p) => p.estado === 'pendiente').length
+      const pendientes = pedidos.filter((p) => p.estado === 'pendiente_pago').length
       const productosStockBajo = productos.filter((p) => p.stock <= 5)
       const stockBajo = productosStockBajo.length
       const registrados = usuarios.filter((u) => u.rol === 'registrado').length
@@ -81,7 +82,7 @@ export default function Dashboard() {
       })
 
       // Distribución por estado
-      const conteoEstado = { pendiente: 0, pagado: 0, enviado: 0, cancelado: 0 }
+      const conteoEstado = { pendiente_pago: 0, pagado: 0, enviado: 0, entregado: 0, cancelado: 0 }
       pedidos.forEach((p) => { if (conteoEstado[p.estado] !== undefined) conteoEstado[p.estado]++ })
       const distribucion = Object.entries(conteoEstado)
         .filter(([, cant]) => cant > 0)

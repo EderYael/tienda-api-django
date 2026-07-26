@@ -7,9 +7,14 @@ export function AuthProvider({ children }) {
   // null = todavía cargando el estado guardado; false = invitado; objeto = logueado
   const [usuario, setUsuario] = useState(null)
   const [cargandoSesion, setCargandoSesion] = useState(true)
+  // Se incrementa SOLO cuando la sesión se cae sola (token vencido + refresh
+  // fallido) — nunca en un cierre de sesión manual. Sirve para mostrar un
+  // aviso distinto ("tu sesión expiró") sin confundirlo con un logout normal.
+  const [sesionExpiroCounter, setSesionExpiroCounter] = useState(0)
 
   const cerrarSesionLocal = useCallback(() => {
     setUsuario(false)
+    setSesionExpiroCounter((c) => c + 1)
   }, [])
 
   useEffect(() => {
@@ -58,6 +63,7 @@ export function AuthProvider({ children }) {
       value={{
         usuario,
         cargandoSesion,
+        sesionExpiroCounter,
         esInvitado: usuario === false,
         estaLogueado: !!usuario,
         iniciarSesion,

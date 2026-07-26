@@ -6,13 +6,25 @@ import Spinner from '../components/Spinner.jsx'
 import { SkeletonFilas } from '../components/Skeleton.jsx'
 import { IconEye } from '../components/icons.jsx'
 
-const ESTADOS = ['pendiente', 'pagado', 'enviado', 'cancelado']
-
 const CLASE_PILL = {
-  pendiente: 'pill-warn',
+  pendiente_pago: 'pill-warn',
   pagado: 'pill-info',
   enviado: 'pill-ok',
+  entregado: 'pill-ok',
   cancelado: 'pill-fail'
+}
+
+const ETIQUETA_ESTADO = {
+  pendiente_pago: 'Pendiente de pago',
+  pagado: 'Pagado',
+  enviado: 'Enviado',
+  entregado: 'Entregado',
+  cancelado: 'Cancelado'
+}
+
+const ETIQUETA_METODO = {
+  deposito: 'Depósito bancario',
+  tarjeta: 'Tarjeta'
 }
 
 export default function Pedidos() {
@@ -24,7 +36,7 @@ export default function Pedidos() {
   const [cargandoLista, setCargandoLista] = useState(true)
   const [error, setError] = useState('')
   const [expandido, setExpandido] = useState(null)
-  const [cambiandoId, setCambiandoId] = useState(null)
+  const [accionEnCurso, setAccionEnCurso] = useState(null)
 
   async function cargar() {
     setCargandoLista(true)
@@ -42,20 +54,86 @@ export default function Pedidos() {
 
   useEffect(() => { cargar() }, [searchQuery])
 
-  async function cambiarEstado(pedido, nuevoEstado) {
-    setCambiandoId(pedido.id)
+  async function ejecutarAccion(pedido, endpoint, mensajeExito) {
+    setAccionEnCurso(pedido.id)
     try {
-      await api(`/api/pedidos/${pedido.id}/`, {
-        method: 'PATCH',
-        body: { estado: nuevoEstado }
-      })
-      showToast(`Pedido #${pedido.id} ahora está "${nuevoEstado}".`, 'success')
+      await api(`/api/pedidos/${pedido.id}/${endpoint}/`, { method: 'POST' })
+      showToast(mensajeExito, 'success')
       cargar()
     } catch (err) {
       showToast(err.message, 'error')
     } finally {
-      setCambiandoId(null)
+      setAccionEnCurso(null)
     }
+  }
+
+  function confirmarDeposito(pedido) {
+    ejecutarAccion(pedido, 'confirmar-deposito', `Depósito del pedido #${pedido.id} confirmado.`)
+  }
+
+  function marcarEnviado(pedido) {
+    ejecutarAccion(pedido, 'marcar-enviado', `Pedido #${pedido.id} marcado como enviado.`)
+  }
+
+  function marcarEntregado(pedido) {
+    ejecutarAccion(pedido, 'marcar-entregado', `Pedido #${pedido.id} marcado como entregado.`)
+  }
+
+  async function cancelarPedido(pedido) {
+    const motivo = window.prompt(`¿Por qué se cancela el pedido #${pedido.id}?`)
+    if (motivo === null) return // el admin le dio "Cancelar" al prompt, no seguimos
+    if (!motivo.trim()) {
+      showToast('Debes indicar un motivo para cancelar.', 'error')
+      return
+    }
+    setAccionEnCurso(pedido.id)
+    try {
+      await api(`/api/pedidos/${pedido.id}/cancelar/`, { method: 'POST', body: { motivo: motivo.trim() } })
+      showToast(`Pedido #${pedido.id} cancelado.`, 'success')
+      cargar()
+    } catch (err) {
+      showToast(err.message, 'error')
+    } finally {
+      setAccionEnCurso(null)
+    }
+  }
+
+  function accionesDisponibles(pedido) {
+    const enCurso = accionEnCurso === pedido.id
+    const botones = []
+
+    if (pedido.estado === 'pendiente_pago' && pedido.metodo_pago === 'deposito') {
+      botones.push(
+        <button key="confirmar-deposito" className="btn btn-primario btn-chico" disabled={enCurso} onClick={() => confirmarDeposito(pedido)}>
+          Confirmar depósito
+        </button>
+      )
+    }
+    if (pedido.estado === 'pendiente_pago' && pedido.metodo_pago === 'tarjeta') {
+      botones.push(<span key="esperando" className="campo-ayuda">Esperando pago del cliente</span>)
+    }
+    if (pedido.estado === 'pagado') {
+      botones.push(
+        <button key="marcar-enviado" className="btn btn-primario btn-chico" disabled={enCurso} onClick={() => marcarEnviado(pedido)}>
+          Marcar enviado
+        </button>
+      )
+    }
+    if (pedido.estado === 'enviado') {
+      botones.push(
+        <button key="marcar-entregado" className="btn btn-primario btn-chico" disabled={enCurso} onClick={() => marcarEntregado(pedido)}>
+          Marcar entregado
+        </button>
+      )
+    }
+    if (pedido.estado !== 'entregado' && pedido.estado !== 'cancelado') {
+      botones.push(
+        <button key="cancelar" className="btn btn-peligro btn-chico" disabled={enCurso} onClick={() => cancelarPedido(pedido)}>
+          Cancelar
+        </button>
+      )
+    }
+    return botones
   }
 
   return (
@@ -73,14 +151,14 @@ export default function Pedidos() {
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th>
+              <th>ID</th><th>Cliente</th><th>Fecha</th><th>Método</th><th>Total</th><th>Estado</th><th></th>
             </tr>
           </thead>
           <tbody>
             {cargandoLista ? (
-              <SkeletonFilas filas={5} columnas={6} />
+              <SkeletonFilas filas={5} columnas={7} />
             ) : pedidos.length === 0 ? (
-              <tr><td colSpan="6"><div className="vacio">Todavía no hay pedidos.</div></td></tr>
+              <tr><td colSpan="7"><div className="vacio">Todavía no hay pedidos.</div></td></tr>
             ) : (
               pedidos.map((p) => (
                 <React.Fragment key={p.id}>
@@ -88,21 +166,17 @@ export default function Pedidos() {
                     <td>#{p.id}</td>
                     <td>{p.usuario}</td>
                     <td>{new Date(p.fecha).toLocaleString()}</td>
+                    <td>{ETIQUETA_METODO[p.metodo_pago] || p.metodo_pago}</td>
                     <td>${parseFloat(p.total).toFixed(2)}</td>
                     <td>
-                      <span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{p.estado}</span>
+                      <span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>
+                        {ETIQUETA_ESTADO[p.estado] || p.estado}
+                      </span>
                     </td>
                     <td>
                       <div className="acciones-fila">
-                        <select
-                          value={p.estado}
-                          disabled={cambiandoId === p.id}
-                          onChange={(e) => cambiarEstado(p, e.target.value)}
-                          style={{ width: 'auto', padding: '6px 10px', fontSize: 12.5 }}
-                        >
-                          {ESTADOS.map((e) => <option key={e} value={e}>{e}</option>)}
-                        </select>
-                        {cambiandoId === p.id && <Spinner size={13} oscuro />}
+                        {accionesDisponibles(p)}
+                        {accionEnCurso === p.id && <Spinner size={13} oscuro />}
                         <button
                           className="btn btn-secundario btn-chico"
                           onClick={() => setExpandido(expandido === p.id ? null : p.id)}
@@ -115,7 +189,7 @@ export default function Pedidos() {
                   </tr>
                   {expandido === p.id && (
                     <tr>
-                      <td colSpan="6" className="fila-detalle">
+                      <td colSpan="7" className="fila-detalle">
                         <strong style={{ fontSize: 12.5 }}>Productos del pedido:</strong>
                         <ul style={{ margin: '8px 0 0 0', paddingLeft: 18, fontSize: 13 }}>
                           {p.detalles.map((d) => (
@@ -124,6 +198,11 @@ export default function Pedidos() {
                             </li>
                           ))}
                         </ul>
+                        {p.estado === 'cancelado' && p.motivo_cancelacion && (
+                          <p style={{ marginTop: 10, fontSize: 12.5, color: 'var(--rojo-error)' }}>
+                            <strong>Motivo de cancelación:</strong> {p.motivo_cancelacion}
+                          </p>
+                        )}
                       </td>
                     </tr>
                   )}

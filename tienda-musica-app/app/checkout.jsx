@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useFocusEffect } from '@react-navigation/native'
 import { Ionicons } from '@expo/vector-icons'
 import { api } from '../utils/api.js'
 import { useCart } from '../context/CartContext.jsx'
@@ -19,17 +20,32 @@ export default function Checkout() {
   const [cargando, setCargando] = useState(true)
   const [confirmando, setConfirmando] = useState(false)
 
-  useEffect(() => {
+  const cargarDirecciones = useCallback(() => {
     api('/api/direcciones/')
       .then((data) => {
         setDirecciones(data)
-        const principal = data.find((d) => d.es_principal) || data[0]
-        if (principal) setDireccionElegida(principal.id)
+        // Si la dirección que ya tenía elegida sigue existiendo, la
+        // conserva (no reinicia la selección cada vez que regresa a esta
+        // pantalla); si no, elige la principal o la primera disponible.
+        setDireccionElegida((actual) => {
+          if (actual && data.some((d) => d.id === actual)) return actual
+          const principal = data.find((d) => d.es_principal) || data[0]
+          return principal ? principal.id : null
+        })
       })
       .catch((err) => showToast(err.message, 'error'))
       .finally(() => setCargando(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [showToast])
+
+  // Se vuelve a pedir la lista de direcciones cada vez que esta pantalla
+  // vuelve a tener foco — así, si el usuario va a "Agregar dirección" y
+  // regresa, la nueva dirección ya aparece sin tener que salir y volver
+  // a entrar al checkout por completo.
+  useFocusEffect(
+    useCallback(() => {
+      cargarDirecciones()
+    }, [cargarDirecciones])
+  )
 
   async function manejarConfirmar() {
     setConfirmando(true)

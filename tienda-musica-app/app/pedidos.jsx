@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native'
+import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { api } from '../utils/api.js'
+import { useToast } from '../context/ToastContext.jsx'
 import Boton from '../components/Boton.jsx'
+import ModalTexto from '../components/ModalTexto.jsx'
 import { Colores, Espaciado, RadioBorde } from '../constants/theme.js'
 
 const COLOR_ESTADO = {
@@ -29,17 +31,43 @@ const ETIQUETA_METODO = {
 
 export default function Pedidos() {
   const router = useRouter()
+  const { showToast } = useToast()
   const [pedidos, setPedidos] = useState([])
   const [expandido, setExpandido] = useState(null)
   const [cargando, setCargando] = useState(true)
+  const [refrescando, setRefrescando] = useState(false)
   const [error, setError] = useState('')
+  const [pedidoACancelar, setPedidoACancelar] = useState(null)
+  const [cancelando, setCancelando] = useState(false)
 
-  useEffect(() => {
+  function cargar({ mostrarSpinnerGrande = true } = {}) {
+    if (mostrarSpinnerGrande) setCargando(true)
     api('/api/pedidos/')
-      .then(setPedidos)
+      .then((data) => { setPedidos(data); setError('') })
       .catch((err) => setError(err.message))
-      .finally(() => setCargando(false))
-  }, [])
+      .finally(() => { setCargando(false); setRefrescando(false) })
+  }
+
+  useEffect(() => { cargar() }, [])
+
+  function onRefrescar() {
+    setRefrescando(true)
+    cargar({ mostrarSpinnerGrande: false })
+  }
+
+  async function cancelarPedido(motivo) {
+    setCancelando(true)
+    try {
+      await api(`/api/pedidos/${pedidoACancelar.id}/cancelar/`, { method: 'POST', body: { motivo } })
+      showToast(`Pedido #${pedidoACancelar.id} cancelado.`, 'info')
+      setPedidoACancelar(null)
+      cargar({ mostrarSpinnerGrande: false })
+    } catch (err) {
+      showToast(err.message, 'error')
+    } finally {
+      setCancelando(false)
+    }
+  }
 
   if (cargando) {
     return <View style={estilos.centrado}><ActivityIndicator size="large" color={Colores.primario} /></View>
@@ -50,11 +78,15 @@ export default function Pedidos() {
   }
 
   return (
+    <>
     <FlatList
       style={estilos.pantalla}
       data={pedidos.slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha))}
       keyExtractor={(item) => String(item.id)}
       contentContainerStyle={estilos.lista}
+      refreshControl={
+        <RefreshControl refreshing={refrescando} onRefresh={onRefrescar} tintColor={Colores.primario} />
+      }
       ListEmptyComponent={
         <View style={estilos.centrado}>
           <Ionicons name="receipt-outline" size={36} color={Colores.textoClaro} />
@@ -98,6 +130,16 @@ export default function Pedidos() {
               />
             )}
 
+            {item.estado !== 'entregado' && item.estado !== 'cancelado' && (
+              <View style={{ marginTop: Espaciado.xs }}>
+                <Boton
+                  titulo="Cancelar pedido"
+                  variante="secundario"
+                  onPress={() => setPedidoACancelar(item)}
+                />
+              </View>
+            )}
+
             {abierto && (
               <View style={estilos.detalles}>
                 {item.detalles.map((d) => (
@@ -112,6 +154,17 @@ export default function Pedidos() {
         )
       }}
     />
+
+    <ModalTexto
+      visible={!!pedidoACancelar}
+      titulo={pedidoACancelar ? `Cancelar pedido #${pedidoACancelar.id}` : ''}
+      placeholder="¿Por qué quieres cancelarlo?"
+      textoBoton="Cancelar pedido"
+      cargando={cancelando}
+      onCancelar={() => setPedidoACancelar(null)}
+      onConfirmar={cancelarPedido}
+    />
+    </>
   )
 }
 

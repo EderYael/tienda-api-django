@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar'
 import { AuthProvider } from '../context/AuthContext.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { CartProvider } from '../context/CartContext.jsx'
+import ObservadorSesion from '../components/ObservadorSesion.jsx'
 import { Colores } from '../constants/theme.js'
 
 export default function RootLayout() {
@@ -11,6 +12,7 @@ export default function RootLayout() {
     <AuthProvider>
       <ToastProvider>
         <CartProvider>
+          <ObservadorSesion />
           <StatusBar style="dark" />
           <Stack
             screenOptions={{

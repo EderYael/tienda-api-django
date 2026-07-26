@@ -12,12 +12,21 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip
 } from 'recharts'
 
-const ESTADOS = ['pendiente', 'pagado', 'enviado', 'cancelado']
+const ESTADOS = ['pendiente_pago', 'pagado', 'enviado', 'entregado', 'cancelado']
+
+const ETIQUETA_ESTADO = {
+  pendiente_pago: 'Pendiente de pago',
+  pagado: 'Pagado',
+  enviado: 'Enviado',
+  entregado: 'Entregado',
+  cancelado: 'Cancelado'
+}
 
 const CLASE_PILL = {
-  pendiente: 'pill-warn',
+  pendiente_pago: 'pill-warn',
   pagado: 'pill-info',
   enviado: 'pill-ok',
+  entregado: 'pill-ok',
   cancelado: 'pill-fail'
 }
 
@@ -321,7 +330,7 @@ export default function Ventas() {
           <label>Estado</label>
           <select value={estado} onChange={(e) => setEstado(e.target.value)}>
             <option value="">Todos</option>
-            {ESTADOS.map((e) => <option key={e} value={e}>{e}</option>)}
+            {ESTADOS.map((e) => <option key={e} value={e}>{ETIQUETA_ESTADO[e]}</option>)}
           </select>
         </div>
         <div className="campo-filtro" style={{ flex: 1 }}>
@@ -445,7 +454,7 @@ export default function Ventas() {
                       </button>
                     </td>
                     <td>{new Date(p.fecha).toLocaleString('es-MX')}</td>
-                    <td><span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{p.estado}</span></td>
+                    <td><span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{ETIQUETA_ESTADO[p.estado] || p.estado}</span></td>
                     <td>${parseFloat(p.total).toFixed(2)}</td>
                   </tr>
                 ))
@@ -493,7 +502,7 @@ export default function Ventas() {
                 {detalleClienteSeleccionado.pedidos.map((p) => (
                   <li key={p.id}>
                     <span>#{p.id} · {new Date(p.fecha).toLocaleDateString('es-MX')}</span>
-                    <span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{p.estado}</span>
+                    <span className={`pill ${CLASE_PILL[p.estado] || 'pill-neutral'}`}>{ETIQUETA_ESTADO[p.estado] || p.estado}</span>
                     <span>${parseFloat(p.total).toFixed(2)}</span>
                   </li>
                 ))}

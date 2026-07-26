@@ -1,9 +1,28 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import (
     Perfil, Categoria, Producto, ImagenProducto, Direccion,
     Pedido, DetallePedido, Resena, PreguntaProducto
 )
+
+
+def _validar_fuerza_password(valor, username='', email=''):
+    """
+    Corre los validadores reales de Django (AUTH_PASSWORD_VALIDATORS en
+    settings.py: longitud mínima, no muy común, no solo números, no muy
+    parecida al usuario/correo) contra una contraseña nueva. Se usa tanto
+    en el registro del cliente como en la creación/edición de usuarios
+    desde el panel admin, para que "1234" o similares queden bloqueados
+    sin importar por dónde se intente crear la cuenta.
+    """
+    usuario_temporal = User(username=username, email=email)
+    try:
+        validate_password(valor, user=usuario_temporal)
+    except DjangoValidationError as e:
+        raise serializers.ValidationError(list(e.messages))
+    return valor
 
 
 class RegistroSerializer(serializers.ModelSerializer):
@@ -12,6 +31,13 @@ class RegistroSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['username', 'email', 'password']
+
+    def validate_password(self, value):
+        return _validar_fuerza_password(
+            value,
+            username=self.initial_data.get('username', ''),
+            email=self.initial_data.get('email', ''),
+        )
 
     def create(self, validated_data):
         usuario = User.objects.create_user(
@@ -45,6 +71,14 @@ class UsuarioAdminSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'is_active', 'rol', 'password']
+
+    def validate_password(self, value):
+        # Si el admin deja el campo vacío al editar (no cambia la
+        # contraseña), esto ni se llama porque required=False. Solo se
+        # valida cuando de verdad se está poniendo una contraseña nueva.
+        username = self.initial_data.get('username') or (self.instance.username if self.instance else '')
+        email = self.initial_data.get('email') or (self.instance.email if self.instance else '')
+        return _validar_fuerza_password(value, username=username, email=email)
 
     def create(self, validated_data):
         perfil_data = validated_data.pop('perfil', {})

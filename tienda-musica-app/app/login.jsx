@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native'
+import { View, Text, Image, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
@@ -41,6 +41,10 @@ export default function Login() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={estilos.contenido} keyboardShouldPersistTaps="handled">
+        <View style={estilos.logoWrap}>
+          <Image source={require('../assets/images/splash-icon.png')} style={estilos.logo} resizeMode="contain" />
+        </View>
+        <Text style={estilos.titulo}>Tienda Música</Text>
         <Text style={estilos.subtitulo}>Ingresa tus datos para continuar</Text>
 
         <CampoTexto
@@ -76,7 +80,10 @@ export default function Login() {
 const estilos = StyleSheet.create({
   pantalla: { flex: 1, backgroundColor: Colores.blanco },
   contenido: { padding: Espaciado.lg, gap: Espaciado.md },
-  subtitulo: { fontSize: 14, color: Colores.textoMedio, marginBottom: Espaciado.xs },
+  logoWrap: { alignItems: 'center', marginTop: Espaciado.lg, marginBottom: Espaciado.xs },
+  logo: { width: 88, height: 88 },
+  titulo: { fontSize: 22, fontWeight: '800', color: Colores.textoOscuro, textAlign: 'center' },
+  subtitulo: { fontSize: 14, color: Colores.textoMedio, marginBottom: Espaciado.xs, textAlign: 'center' },
   error: { fontSize: 13, color: Colores.rojoError, fontWeight: '500' },
   pieTexto: { fontSize: 13.5, color: Colores.textoMedio, textAlign: 'center', marginTop: Espaciado.sm },
   enlace: { color: Colores.primario, fontWeight: '700' },
